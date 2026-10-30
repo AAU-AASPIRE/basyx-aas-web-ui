@@ -4,13 +4,13 @@
       <v-btn
         v-if="!readonly"
         :active="showCatalog"
-        aria-label="Show the catalog"
-        icon="mdi-view-list-outline"
+        :color="showCatalog ? 'primary' : undefined"
+        prepend-icon="mdi-shape-plus-outline"
         size="small"
-        :title="showCatalog ? 'Hide the catalog' : 'Show the catalog'"
+        :title="showCatalog ? 'Hide the catalog' : 'Show the catalog: process steps, skills and gateways to drag into the diagram'"
         variant="text"
-        @click="showCatalog = !showCatalog"
-      />
+        @click="setCatalog(!showCatalog)"
+      >Catalog</v-btn>
 
       <v-btn
         aria-label="Undo"
@@ -79,6 +79,21 @@
 
       <v-spacer />
 
+      <v-tooltip v-if="!readonly" location="bottom" max-width="340">
+        <template #activator="{ props: tip }">
+          <v-icon
+            v-bind="tip"
+            aria-label="How to draw"
+            class="bpmn-help mr-2"
+            icon="mdi-information-outline"
+            size="20"
+            tabindex="0"
+          />
+        </template>
+        Drag from the catalog onto an arrow to insert, or onto the canvas to place freely. Wire from a shape's right dot
+        to another shape; drag an arrow's end to rewire it. Delete removes, Ctrl+Z undoes.
+      </v-tooltip>
+
       <v-chip
         class="mr-1"
         :color="parsed.nodes ? 'success' : 'warning'"
@@ -107,10 +122,6 @@
     </div>
 
     <div class="bpmn-body">
-      <aside v-if="showCatalog && !readonly" aria-label="Catalog" class="bpmn-catalog">
-        <BpmnPalette :groups="groups" @add="addFromCatalog" @drag="dragging = $event" />
-      </aside>
-
       <div
         ref="canvas"
         :aria-label="label"
@@ -153,7 +164,7 @@
           @pane-click="clearSelection"
         >
           <Background :gap="16" pattern-color="#c3ced6" />
-          <Controls :show-interactive="false" />
+          <Controls position="bottom-right" :show-interactive="false" />
 
           <template #node-bpmn="{ data, id }">
             <BpmnShape :data="data" :readonly="readonly" @open="open(id)" />
@@ -169,29 +180,42 @@
           Drag {{ mode === 'plan' ? 'a process step' : 'a skill' }} from the catalog onto the arrow
         </div>
       </div>
+
+      <!-- After the canvas, over it; what is dropped on the catalog itself does not reach the canvas. -->
+      <v-slide-x-transition>
+        <aside v-if="showCatalog && !readonly" aria-label="Catalog" class="bpmn-catalog" :class="{ 'bpmn-catalog--dragging': dragging }">
+          <div class="bpmn-catalog__head">
+            <span class="text-subtitle-2">Catalog</span>
+
+            <v-btn
+              aria-label="Close the catalog"
+              density="comfortable"
+              icon="mdi-close"
+              size="small"
+              variant="text"
+              @click="setCatalog(false)"
+            />
+          </div>
+
+          <BpmnPalette :groups="groups" @add="addFromCatalog" @drag="dragging = $event" />
+        </aside>
+      </v-slide-x-transition>
     </div>
 
-    <div class="bpmn-status">
-      <template v-if="parsed.issues.length > 0">
-        <button
-          v-for="issue in parsed.issues"
-          :key="issue.text"
-          class="bpmn-status__issue text-body-2"
-          type="button"
-          @click="show(issue.shapes)"
-        >
-          <v-icon color="warning" icon="mdi-alert-circle-outline" size="16" />
-          <span>{{ issue.text }}</span>
-          <v-icon class="ml-auto" icon="mdi-crosshairs-gps" size="14" />
-        </button>
+    <div v-if="parsed.issues.length > 0" class="bpmn-status">
+      <button
+        v-for="issue in parsed.issues"
+        :key="issue.text"
+        class="bpmn-status__issue text-body-2"
+        type="button"
+        @click="show(issue.shapes)"
+      >
+        <v-icon color="warning" icon="mdi-alert-circle-outline" size="16" />
+        <span>{{ issue.text }}</span>
+        <v-icon class="ml-auto" icon="mdi-crosshairs-gps" size="14" />
+      </button>
 
-        <p class="text-caption text-medium-emphasis mt-1">Until the drawing is a valid flow, the last valid one is kept and cannot be saved over.</p>
-      </template>
-
-      <p v-else class="text-caption text-medium-emphasis">
-        Drag from the catalog onto an arrow to insert, or onto the canvas to place freely. Wire from a shape's right dot
-        to another shape; drag an arrow's end to rewire it. Delete removes, Ctrl+Z undoes.
-      </p>
+      <p class="text-caption text-medium-emphasis mt-1">Until the drawing is a valid flow, the last valid one is kept and cannot be saved over.</p>
     </div>
 
     <v-snackbar v-model="noticeShown" location="bottom" timeout="2500">{{ notice }}</v-snackbar>
@@ -209,7 +233,7 @@
   import type { Connection, Edge, NodeChange, NodeDragEvent } from '@vue-flow/core'
   import { Background } from '@vue-flow/background'
   import { Controls } from '@vue-flow/controls'
-  import { ConnectionLineType, useVueFlow, VueFlow } from '@vue-flow/core'
+  import { ConnectionLineType, getRectOfNodes, useVueFlow, VueFlow } from '@vue-flow/core'
   import { useRouter } from 'vue-router'
   import { useTheme } from 'vuetify'
   import { assignSkill, handedParameter, instanceName } from '../../ProcessSequence/skills/skillFlow'
@@ -258,8 +282,11 @@
   const theme = useTheme()
   const skillLink = useSkillLink()
   const flowId = `bpmn-flow-${useId()}`
-  const { fitView, screenToFlowCoordinate, setNodes, setEdges } = useVueFlow(flowId)
+  const { fitView, getNodes, screenToFlowCoordinate, setNodes, setEdges, setViewport } = useVueFlow(flowId)
   const AUTO_LAYOUT = 'process-sequence.bpmn-auto-layout'
+  const CATALOG = 'process-sequence.bpmn-catalog'
+  /** What the open catalog takes of the canvas's left edge: its width and margins. */
+  const CATALOG_ROOM = 260
 
   const canvas = ref<HTMLElement>()
   /** What each task's and each split's shape stands for. Kept for the editor's life, so undo finds it. */
@@ -268,8 +295,9 @@
   const parsed = shallowRef<Parsed>({ issues: [], blocks: new Map(), branchFlows: new Map(), made: new Map() })
   const past = shallowRef<Diagram[]>([])
   const future = shallowRef<Diagram[]>([])
-  const autoLayout = ref(readAutoLayout())
-  const showCatalog = ref(true)
+  const autoLayout = ref(readChoice(AUTO_LAYOUT) !== 'off')
+  /** The catalog floats over the canvas; closed unless opened (and kept open) in this browser. */
+  const showCatalog = ref(readChoice(CATALOG) === 'open')
   const selection = ref<{ shapes: string[], flow: string }>({ shapes: [], flow: '' })
   /** The flow, or the shape, that what is dragged would go onto. */
   const target = ref('')
@@ -333,11 +361,20 @@
     if (own && planIdOf(own) !== id) selection.value = { shapes: [], flow: '' }
   })
 
-  function readAutoLayout (): boolean {
+  /** A choice kept per browser, or null where none is (or none can be) kept. */
+  function readChoice (key: string): string | null {
     try {
-      return localStorage.getItem(AUTO_LAYOUT) !== 'off'
+      return localStorage.getItem(key)
     } catch {
-      return true
+      return null
+    }
+  }
+
+  function keepChoice (key: string, value: string): void {
+    try {
+      localStorage.setItem(key, value)
+    } catch {
+      // Not kept: the choice holds for this page.
     }
   }
 
@@ -688,12 +725,14 @@
 
   function setAutoLayout (on: boolean): void {
     autoLayout.value = on
-    try {
-      localStorage.setItem(AUTO_LAYOUT, on ? 'on' : 'off')
-    } catch {
-      // Not kept: the choice holds for this page.
-    }
+    keepChoice(AUTO_LAYOUT, on ? 'on' : 'off')
     if (on && parsed.value.nodes) commit(laidOut(diagram.value, registry, parsed.value))
+  }
+
+  function setCatalog (open: boolean): void {
+    showCatalog.value = open
+    keepChoice(CATALOG, open ? 'open' : 'closed')
+    if (open) fit()
   }
 
   function tidy (): void {
@@ -734,8 +773,24 @@
     fit()
   }
 
+  /** The whole diagram in view; with the catalog open, in the part of the canvas it leaves free. */
   function fit (): void {
-    void nextTick(() => fitView({ padding: 0.15, maxZoom: 1 }))
+    void nextTick(() => {
+      const box = canvas.value?.getBoundingClientRect()
+      if (!showCatalog.value || props.readonly || !box || getNodes.value.length === 0) {
+        void fitView({ padding: 0.15, maxZoom: 1 })
+        return
+      }
+      const rect = getRectOfNodes(getNodes.value)
+      const pad = 32
+      const width = box.width - CATALOG_ROOM - 2 * pad
+      const zoom = Math.max(0.2, Math.min(1, width / rect.width, (box.height - 2 * pad) / rect.height))
+      void setViewport({
+        x: CATALOG_ROOM + pad + (width - rect.width * zoom) / 2 - rect.x * zoom,
+        y: box.height / 2 - (rect.y + rect.height / 2) * zoom,
+        zoom,
+      })
+    })
   }
 
   /** A call opens the sequence it calls; a step the skill it runs. */
@@ -776,24 +831,59 @@
 }
 
 .bpmn-body {
-  display: flex;
-  height: max(460px, calc(100vh - 500px));
+  position: relative;
+  height: max(480px, calc(100vh - 440px));
   border-top: 1px solid rgba(var(--v-theme-on-surface), 0.12);
   border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.12);
 }
 
 .bpmn-catalog {
-  flex: none;
-  width: 236px;
-  min-height: 0;
-  border-right: 1px solid rgba(var(--v-theme-on-surface), 0.12);
-  background: rgba(var(--v-theme-on-surface), 0.02);
+  position: absolute;
+  z-index: 5;
+  top: 10px;
+  bottom: 10px;
+  left: 10px;
+  display: flex;
+  flex-direction: column;
+  width: 240px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+  border-radius: 10px;
+  background: rgb(var(--v-theme-surface));
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  transition: opacity 0.15s;
+}
+
+/* While an item is dragged, the diagram under the catalog shows through. */
+.bpmn-catalog--dragging {
+  opacity: 0.55;
+}
+
+.bpmn-catalog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 4px 0 14px;
+}
+
+.bpmn-catalog :deep(.bpmn-palette) {
+  flex: 1;
+  height: auto;
+}
+
+.bpmn-help {
+  cursor: help;
+  opacity: 0.7;
+}
+
+.bpmn-help:hover,
+.bpmn-help:focus-visible {
+  opacity: 1;
 }
 
 .bpmn-canvas {
   position: relative;
-  flex: 1;
-  min-width: 0;
+  height: 100%;
   background: rgba(var(--v-theme-on-surface), 0.015);
   outline: none;
   transition: box-shadow 0.12s;

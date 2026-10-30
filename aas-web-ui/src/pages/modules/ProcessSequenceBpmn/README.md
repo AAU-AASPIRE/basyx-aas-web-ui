@@ -18,7 +18,8 @@ open in either, and removing this module leaves the others as they are.
 
 ## Drawing
 
-The catalog on the left holds what can be put in the flow: the product's process steps and its
+**Catalog** in the toolbar opens a panel over the canvas's left edge (closed by default, kept open or
+closed per browser; the canvas keeps the editor's full width). It holds what can be put in the flow: the product's process steps and its
 subprocesses (planner), the skills of the module's components by component (skill editor), the
 gateways, and an empty step. Drag an item onto an arrow to insert it there, onto a shape to put it
 after that shape, or onto the empty canvas to place it freely; a double-click or Enter inserts it on
@@ -28,7 +29,7 @@ conditional steps come as a split with its join; a single gateway is there to wi
 Wire from a shape's right dot to another shape; drag an arrow's end to another shape to rewire it.
 Drag a step onto an arrow to move it there. Delete removes the selection (a gateway of a block
 removes the whole block, closing the line), Ctrl+Z and Ctrl+Y undo and redo. On an arrow out of an
-exclusive gateway, **Make otherwise** makes it the default flow.
+exclusive gateway, **Make otherwise** makes it the default flow. The (i) in the toolbar says this in short.
 
 **Auto layout** (on by default, kept per browser) lays the diagram out after each change, as the
 flow's structure says: the first branch of a block along the line, the others below it. Off, shapes
