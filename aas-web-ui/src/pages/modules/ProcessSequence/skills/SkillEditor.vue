@@ -125,7 +125,13 @@
 
       <v-row v-else-if="owner" no-gutters>
         <v-col cols="12" md="8">
-          <SkillFlowGraph v-model="nodes" :label="`What ${command} of ${skill} runs`" :selected-id="selectedId" @select="selectedId = $event" />
+          <component
+            :is="graph ?? SkillFlowGraph"
+            v-model="nodes"
+            :label="`What ${command} of ${skill} runs`"
+            :selected-id="selectedId"
+            @select="selectedId = $event"
+          />
         </v-col>
 
         <v-col class="border-s" cols="12" md="4">
@@ -198,6 +204,7 @@
   import type { PlanNode, StepNode } from '../types/plan'
   import type { AasElement } from '../utils/sequenceModel'
   import type { ResourceSkill, SkillCommand } from './skillFlow'
+  import type { Component } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import { flattenNodes } from '../utils/plan'
   import SkillBlockInspector from './SkillBlockInspector.vue'
@@ -208,8 +215,11 @@
   import SkillStepInspector from './SkillStepInspector.vue'
   import { useSkillRepository } from './useSkillRepository'
 
-  /** One skill of a module's Skills submodel: ``skill`` in the submodel ``submodelId``; ``path``: its element's endpoint. */
-  const props = defineProps<{ submodelId: string, aasId: string, skill: string, path?: string }>()
+  /**
+   * One skill of a module's Skills submodel: ``skill`` in the submodel ``submodelId``; ``path``: its element's endpoint.
+   * ``graph``: what draws the steps, with SkillFlowGraph's props and events (the BPMN notation's BpmnFlowGraph).
+   */
+  const props = defineProps<{ submodelId: string, aasId: string, skill: string, path?: string, graph?: Component }>()
 
   const route = useRoute()
   const router = useRouter()

@@ -67,7 +67,8 @@
 
           <PlanOverview v-if="overview" :plan="plan" :scope-id="selectedScopeId" />
 
-          <PlanGraph
+          <component
+            :is="graph ?? PlanGraph"
             v-else
             :key="selectedScopeId"
             v-model="scope.nodes"
@@ -76,7 +77,7 @@
             :processes="availableProcesses"
             :selected-id="selectedNodeId"
             :targets="targets"
-            @change-type="(id, kind) => { selectedNodeId = id; changeType(kind) }"
+            @change-type="(id: string, kind: PlanNode['kind']) => { selectedNodeId = id; changeType(kind) }"
             @open="selectedScopeId = $event"
             @select="selectedNodeId = $event"
           />
@@ -118,12 +119,17 @@
 </template>
 
 <script setup lang="ts">
+  import type { PlanNode } from '../types/plan'
+  import type { Component } from 'vue'
   import { usePlanWorkspace } from '../composables/usePlanWorkspace'
   import PlanGraph from './PlanGraph.vue'
   import PlanInspector from './PlanInspector.vue'
   import PlanOverview from './PlanOverview.vue'
   import PlanTree from './PlanTree.vue'
   import SplitPanes from './SplitPanes.vue'
+
+  /** What draws the sequence, with PlanGraph's props and events (the BPMN notation's PlanBpmnGraph). */
+  defineProps<{ graph?: Component }>()
 
   const dialog = ref(false)
   const subprocessName = ref('')
