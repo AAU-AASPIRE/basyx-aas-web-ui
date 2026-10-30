@@ -15,10 +15,11 @@
       <v-btn :disabled="saving" prepend-icon="mdi-refresh" size="small" @click="reload">Reload plans</v-btn>
 
       <v-btn
-        :disabled="saving"
+        :disabled="saving || drawing.length > 0"
         :loading="saving"
         prepend-icon="mdi-content-save-outline"
         size="small"
+        :title="drawing.length > 0 ? 'The drawing is not a valid flow yet: fix it to save' : undefined"
         variant="tonal"
         @click="save"
       >Save draft</v-btn>
@@ -78,6 +79,7 @@
             :selected-id="selectedNodeId"
             :targets="targets"
             @change-type="(id: string, kind: PlanNode['kind']) => { selectedNodeId = id; changeType(kind) }"
+            @issues="drawing = $event"
             @open="selectedScopeId = $event"
             @select="selectedNodeId = $event"
           />
@@ -134,11 +136,16 @@
   const dialog = ref(false)
   const subprocessName = ref('')
   const overview = ref(false)
+  /** What keeps the graph's drawing from being a flow (a graph that is drawn freely says so): nothing to save yet. */
+  const drawing = ref<string[]>([])
   const {
     plan, product, scope, selectedScopeId, selectedNodeId, selectedNode, loading, saving,
     error, message, dirty, targets, availableProcesses, resources, breadcrumb, ownerName,
     reload, addSubprocess, save, download, changeType, undoTypeChange, canUndoType, removeCondition,
   } = usePlanWorkspace()
+  watch([selectedScopeId, overview], () => {
+    drawing.value = []
+  })
 
   const rootName = computed(() => plan.value?.scopes.find(item => item.id === plan.value?.rootScopeId)?.name)
 

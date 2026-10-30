@@ -12,6 +12,15 @@
         variant="tonal"
       >{{ owner.deployment === 'Built' ? 'Built' : 'Described, not built' }}</v-chip>
 
+      <v-chip
+        v-if="autoCheck && owner && owner.kind === 'Composite' && checkState"
+        :color="checkState.color"
+        :prepend-icon="checkState.icon"
+        size="small"
+        :title="checkState.title"
+        variant="tonal"
+      >{{ checkState.text }}</v-chip>
+
       <v-spacer />
 
       <v-btn-toggle
@@ -36,18 +45,18 @@
 
       <v-btn
         v-if="owner && owner.kind === 'Composite'"
-        :disabled="issues.length > 0 || busy || checking"
+        :disabled="blocked || busy || checking"
         :loading="checking"
         prepend-icon="mdi-check-decagram-outline"
         size="small"
         variant="tonal"
-        @click="inspect"
+        @click="inspect()"
       >Check</v-btn>
 
       <v-btn
         v-if="owner && owner.kind !== 'Primitive'"
         color="primary"
-        :disabled="!pending || issues.length > 0 || busy"
+        :disabled="!pending || blocked || busy"
         :loading="busy"
         prepend-icon="mdi-content-save"
         size="small"
@@ -93,7 +102,7 @@
       />
 
       <v-alert
-        v-if="checked && checked.length === 0"
+        v-if="checked && checked.length === 0 && !autoCheck"
         class="mx-3 mb-2"
         density="compact"
         text="Checked: run from the module's rest state, every step's conditions hold, and so does the end."
@@ -128,8 +137,10 @@
           <component
             :is="graph ?? SkillFlowGraph"
             v-model="nodes"
+            v-bind="graph ? { catalog } : {}"
             :label="`What ${command} of ${skill} runs`"
             :selected-id="selectedId"
+            @issues="drawing = $event"
             @select="selectedId = $event"
           />
         </v-col>
@@ -217,9 +228,11 @@
 
   /**
    * One skill of a module's Skills submodel: ``skill`` in the submodel ``submodelId``; ``path``: its element's endpoint.
-   * ``graph``: what draws the steps, with SkillFlowGraph's props and events (the BPMN notation's BpmnFlowGraph).
+   * ``graph``: what draws the steps, with SkillFlowGraph's props and events (the BPMN notation's BpmnFlowGraph,
+   * which also takes the catalog and says what keeps its drawing from being a flow). ``autoCheck``: have the skill
+   * service's checker run the skill a moment after each change, not only on Check.
    */
-  const props = defineProps<{ submodelId: string, aasId: string, skill: string, path?: string, graph?: Component }>()
+  const props = defineProps<{ submodelId: string, aasId: string, skill: string, path?: string, graph?: Component, autoCheck?: boolean }>()
 
   const route = useRoute()
   const router = useRouter()
@@ -247,6 +260,12 @@
   /** The checker's findings on the flow on screen, in words; null until it is checked (again). */
   const checked = ref<string[] | null>(null)
   const checking = ref(false)
+  /** The checker could not be reached when it ran by itself. */
+  const unreachable = ref(false)
+  /** What keeps the graph's drawing from being a flow: the flow on screen is the last valid one. */
+  const drawing = ref<string[]>([])
+  let checks = 0
+  let timer: ReturnType<typeof setTimeout> | undefined
 
   const own = computed(() => (model.value ? readSkills(model.value, props.aasId) : []))
   const catalog = computed(() => [...own.value, ...components.value])
@@ -264,6 +283,17 @@
     return withFlow(model.value, props.skill, command.value, nodes.value, catalog.value)
   })
   const pending = computed(() => touched.value || edited.value)
+  /** Nothing is saved, checked or shown anew while the flow has issues or the drawing is not a flow. */
+  const blocked = computed(() => issues.value.length > 0 || drawing.value.length > 0)
+  const checkState = computed(() => {
+    if (checking.value) return { text: 'Checking', icon: 'mdi-progress-clock', color: undefined, title: 'The checker runs the skill through the module\'s states' }
+    if (blocked.value) return { text: 'Not checked', icon: 'mdi-minus-circle-outline', color: undefined, title: 'Checked once the flow is valid' }
+    if (unreachable.value) return { text: 'Checker not reachable', icon: 'mdi-lan-disconnect', color: undefined, title: 'The skill service did not answer' }
+    if (!checked.value) return null
+    return checked.value.length === 0
+      ? { text: 'Checked', icon: 'mdi-check-decagram-outline', color: 'success', title: 'Run from the module\'s rest state, every step\'s conditions hold, and so does the end' }
+      : { text: `${checked.value.length} ${checked.value.length === 1 ? 'finding' : 'findings'}`, icon: 'mdi-alert-decagram-outline', color: 'warning', title: 'The checker\'s findings are listed below' }
+  })
   const note = computed(() => {
     if (owner.value?.kind === 'ModuleControl') return 'What the module runs itself. A change here needs a restart of its control program.'
     if (owner.value?.kind === 'Composite') {
@@ -279,6 +309,15 @@
   watch(nodes, () => {
     checked.value = null
   }, { deep: true })
+  // The checker by itself, once the editing pauses.
+  watch([nodes, loaded, blocked], () => {
+    if (!props.autoCheck) return
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      if (loaded.value && owner.value?.kind === 'Composite' && !blocked.value) void inspect(true)
+    }, 1200)
+  }, { deep: true })
+  onBeforeUnmount(() => clearTimeout(timer))
 
   async function load (): Promise<void> {
     failure.value = ''
@@ -318,13 +357,13 @@
 
   /** Keep what is on screen in the working copy before the other command is shown. */
   function open (which: SkillCommand): void {
-    if (issues.value.length > 0) return
+    if (blocked.value) return
     keep()
     show(which)
   }
 
   function parameter (parameterName: string, key: 'defaultValue' | 'minValue' | 'maxValue', text: string): void {
-    if (!model.value || issues.value.length > 0) return
+    if (!model.value || blocked.value) return
     keep()
     model.value = withParameter(model.value, props.skill, parameterName, { [key]: text.trim() })
     touched.value = true
@@ -340,26 +379,35 @@
     }
   }
 
-  /** Have the skill service run the skill as it is on screen through the module's states (modplan's checker). */
-  async function inspect (): Promise<void> {
-    if (!model.value || issues.value.length > 0) return
+  /**
+   * Have the skill service run the skill as it is on screen through the module's states (modplan's checker).
+   * ``quiet``: run by itself; a service that does not answer is shown as such, not as a failure.
+   */
+  async function inspect (quiet = false): Promise<void> {
+    if (!model.value || blocked.value) return
+    const run = ++checks
     checking.value = true
-    failure.value = ''
+    if (!quiet) failure.value = ''
     try {
       const element = ((applied.value ?? model.value).submodelElements ?? []).find((item: AasElement) => item.idShort === props.skill)
       // eslint-disable-next-line unicorn/prefer-structured-clone -- plain JSON: nested reactive proxies cannot be cloned
       const found = await checkSkill(props.aasId, JSON.parse(JSON.stringify(element)))
+      // A later run is about a later flow.
+      if (run !== checks) return
       checked.value = (found.skills[props.skill] ?? []).map(finding => findingLine(finding))
+      unreachable.value = false
     } catch (error) {
+      if (run !== checks) return
       checked.value = null
-      failure.value = error instanceof Error ? error.message : String(error)
+      if (quiet) unreachable.value = true
+      else failure.value = error instanceof Error ? error.message : String(error)
     } finally {
-      checking.value = false
+      if (run === checks) checking.value = false
     }
   }
 
   async function create (): Promise<void> {
-    if (!model.value || issues.value.length > 0) return
+    if (!model.value || blocked.value) return
     busy.value = true
     failure.value = ''
     try {
@@ -382,7 +430,7 @@
   }
 
   async function store (): Promise<void> {
-    if (!model.value || issues.value.length > 0) return
+    if (!model.value || blocked.value) return
     busy.value = true
     failure.value = ''
     try {

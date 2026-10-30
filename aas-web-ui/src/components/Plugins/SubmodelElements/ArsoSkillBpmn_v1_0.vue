@@ -22,6 +22,7 @@
     <SkillEditor
       v-if="skillEditor !== 'classic' && submodelId && aasId && submodelElementData?.idShort"
       :aas-id="aasId"
+      auto-check
       :graph="BpmnFlowGraph"
       :path="submodelElementData.path"
       :skill="submodelElementData.idShort"
