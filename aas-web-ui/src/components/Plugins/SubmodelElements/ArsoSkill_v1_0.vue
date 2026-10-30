@@ -1,7 +1,7 @@
 <template>
   <v-container class="pa-0" fluid>
     <SkillEditor
-      v-if="submodelId && aasId && submodelElementData?.idShort"
+      v-if="skillEditor !== 'bpmn' && submodelId && aasId && submodelElementData?.idShort"
       :aas-id="aasId"
       :path="submodelElementData.path"
       :skill="submodelElementData.idShort"
@@ -12,6 +12,7 @@
 
 <script lang="ts" setup>
   import SkillEditor from '@/pages/modules/ProcessSequence/skills/SkillEditor.vue'
+  import { skillEditor } from '@/pages/modules/ProcessSequence/skills/skillEditorSetting'
   import { useAASStore } from '@/store/AASDataStore'
   import { base64Decode } from '@/utils/EncodeDecodeUtils'
 

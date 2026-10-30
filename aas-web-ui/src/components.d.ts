@@ -26,6 +26,7 @@ declare module 'vue' {
     AppNavigation: typeof import('./components/AppNavigation/AppNavigation.vue')['default']
     AreaChart: typeof import('./components/Widgets/AreaChart.vue')['default']
     ArsoSkill_v1_0: typeof import('./components/Plugins/SubmodelElements/ArsoSkill_v1_0.vue')['default']
+    ArsoSkillBpmn_v1_0: typeof import('./components/Plugins/SubmodelElements/ArsoSkillBpmn_v1_0.vue')['default']
     ArsoSkills_v1_0: typeof import('./components/Plugins/Submodels/ArsoSkills_v1_0.vue')['default']
     AssetIdInput: typeof import('./components/EditorComponents/InputTypes/AssetIdInput.vue')['default']
     AssetInformation: typeof import('./components/UIComponents/AssetInformation.vue')['default']
