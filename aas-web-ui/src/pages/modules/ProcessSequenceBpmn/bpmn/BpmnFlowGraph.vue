@@ -310,6 +310,26 @@
   let reported: string | null = null
   let fitPending = true
 
+  // The canvas made wider or narrower (a side panel hidden or shown, the window resized): fit again,
+  // once it has settled, so the diagram uses the room it has.
+  let width = 0
+  let refit: ReturnType<typeof setTimeout> | undefined
+  const resized = typeof ResizeObserver === 'undefined'
+    ? undefined
+    : new ResizeObserver(([entry]) => {
+      const next = Math.round(entry?.contentRect.width ?? 0)
+      if (width && next && Math.abs(next - width) > 8) {
+        clearTimeout(refit)
+        refit = setTimeout(fit, 150)
+      }
+      width = next || width
+    })
+  onMounted(() => canvas.value && resized?.observe(canvas.value))
+  onBeforeUnmount(() => {
+    resized?.disconnect()
+    clearTimeout(refit)
+  })
+
   /** A component's or a station's short name, from its AAS id. */
   const component = (aasId: string) => aasId.split('/').at(-1)?.replace(/AAS$/, '') ?? ''
   const groups = computed(() => catalogGroups(props.mode, { processes: props.processes, targets: props.targets, skills: props.catalog }))
