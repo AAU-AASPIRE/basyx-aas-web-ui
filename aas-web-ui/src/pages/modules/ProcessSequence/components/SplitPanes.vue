@@ -1,13 +1,34 @@
 <template>
-  <div ref="containerElement" class="split-panes" :class="{ 'split-panes--right-collapsed': isRightCollapsed }">
+  <div ref="containerElement" class="split-panes">
+    <PaneTab
+      v-if="hidden.left"
+      class="mr-2"
+      :label="leftLabel"
+      side="left"
+      @open="show('left')"
+    />
+
     <div
-      class="split-pane"
+      v-else
+      class="split-pane split-pane--side"
       :style="{ flexBasis: `${sizes[0]}%`, maxWidth: `${sizes[0]}%` }"
     >
       <slot name="left" />
+
+      <v-btn
+        :aria-label="`Hide the ${leftLabel}`"
+        class="split-pane__hide"
+        density="comfortable"
+        icon="mdi-chevron-double-left"
+        size="small"
+        :title="`Hide the ${leftLabel}`"
+        variant="text"
+        @click="hide('left')"
+      />
     </div>
 
     <div
+      v-if="!hidden.left"
       :aria-label="`Resize the ${leftLabel}`"
       aria-orientation="vertical"
       :aria-valuemax="100 - minPane * 2"
@@ -23,12 +44,20 @@
 
     <div
       class="split-pane split-pane--main"
-      :style="isRightCollapsed ? { flexBasis: 'auto', maxWidth: 'none' } : { flexBasis: `${sizes[1]}%`, maxWidth: `${sizes[1]}%` }"
+      :style="hidden.left || hidden.right ? { flexBasis: 'auto', maxWidth: 'none' } : { flexBasis: `${sizes[1]}%`, maxWidth: `${sizes[1]}%` }"
     >
       <slot />
     </div>
 
-    <template v-if="!isRightCollapsed">
+    <PaneTab
+      v-if="hidden.right"
+      class="ml-2"
+      :label="rightLabel"
+      side="right"
+      @open="show('right')"
+    />
+
+    <template v-else>
       <div
         :aria-label="`Resize the ${rightLabel}`"
         aria-orientation="vertical"
@@ -44,10 +73,21 @@
       />
 
       <div
-        class="split-pane"
+        class="split-pane split-pane--side"
         :style="{ flexBasis: `${sizes[2]}%`, maxWidth: `${sizes[2]}%` }"
       >
         <slot name="right" />
+
+        <v-btn
+          :aria-label="`Hide the ${rightLabel}`"
+          class="split-pane__hide"
+          density="comfortable"
+          icon="mdi-chevron-double-right"
+          size="small"
+          :title="`Hide the ${rightLabel}`"
+          variant="text"
+          @click="hide('right')"
+        />
       </div>
     </template>
   </div>
@@ -55,15 +95,17 @@
 
 <script lang="ts" setup>
   /**
-   * Three resizable columns with a collapsible right column.
+   * Three resizable columns; either side column can be hidden to a tab along its edge.
    *
    * Vuetify has no splitter, and a three pane editor is the one place a hand written one is worth it:
    * the handles are keyboard operable, they respect a minimum so no pane can be lost, and the sizes
    * are remembered so the layout is the same the next time the module is opened.
    *
    * The columns are sized as percentages of the container so the layout survives a window resize,
-   * and the centre column absorbs the difference when the right column is collapsed.
+   * and the centre column absorbs the difference when a side column is hidden. Which are hidden is
+   * remembered too.
    */
+  import PaneTab from './PaneTab.vue'
 
   const MIN_PANE = 12
   const KEYBOARD_STEP = 2
@@ -80,12 +122,14 @@
     storageKey: 'processSequence.splitSizes',
   })
 
-  const emit = defineEmits<{ 'update:right-collapsed': [collapsed: boolean] }>()
+  type Side = 'left' | 'right'
 
-  const isRightCollapsed = ref(false)
+  const hidden = ref<Record<Side, boolean>>({ left: false, right: false })
   const sizes = ref<[number, number, number]>([...DEFAULT_SIZES])
+  /** Both side columns hidden: the centre column has the whole width. */
+  const focused = computed(() => hidden.value.left && hidden.value.right)
 
-  const minPane = computed(() => (isRightCollapsed.value ? 10 : MIN_PANE))
+  const minPane = computed(() => (hidden.value.left || hidden.value.right ? 10 : MIN_PANE))
 
   function readStored (): void {
     try {
@@ -101,11 +145,18 @@
     } catch {
       // A corrupt or unreadable entry is not worth failing a layout over; the defaults are fine.
     }
+    try {
+      const stored = JSON.parse(localStorage.getItem(`${props.storageKey}.hidden`) ?? '{}') as Partial<Record<Side, unknown>>
+      hidden.value = { left: stored.left === true, right: stored.right === true }
+    } catch {
+      // As above: everything shown.
+    }
   }
 
   function store (): void {
     try {
       localStorage.setItem(props.storageKey, JSON.stringify(sizes.value))
+      localStorage.setItem(`${props.storageKey}.hidden`, JSON.stringify(hidden.value))
     } catch {
       // Private browsing, or a full quota. The layout simply will not be remembered.
     }
@@ -202,13 +253,24 @@
     store()
   }
 
-  function toggleRight (): void {
-    isRightCollapsed.value = !isRightCollapsed.value
-    emit('update:right-collapsed', isRightCollapsed.value)
-    if (!isRightCollapsed.value) {
+  function hide (side: Side): void {
+    hidden.value = { ...hidden.value, [side]: true }
+    store()
+  }
+
+  function show (side: Side): void {
+    hidden.value = { ...hidden.value, [side]: false }
+    clampAll()
+    store()
+  }
+
+  /** Hide both side columns, or show them both again. */
+  function focus (on: boolean): void {
+    hidden.value = { left: on, right: on }
+    if (!on) {
       clampAll()
-      store()
     }
+    store()
   }
 
   const containerElement = ref<HTMLElement | null>(null)
@@ -218,7 +280,7 @@
     window.removeEventListener('pointermove', onDragMove)
   })
 
-  defineExpose({ reset, toggleRight, sizes })
+  defineExpose({ reset, focus, focused, hidden, sizes })
 </script>
 
 <style scoped>
@@ -236,6 +298,23 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .split-pane--side {
+    position: relative;
+  }
+
+  /* Over the top right of the column's own card, beside its title. */
+  .split-pane__hide {
+    position: absolute;
+    top: 8px;
+    right: 6px;
+    opacity: 0.6;
+  }
+
+  .split-pane__hide:hover,
+  .split-pane__hide:focus-visible {
+    opacity: 1;
   }
 
   .split-pane--main {

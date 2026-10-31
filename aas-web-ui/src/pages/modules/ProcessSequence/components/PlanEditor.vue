@@ -37,7 +37,12 @@
     <p class="text-caption mb-2">Editing the plan owned by {{ ownerName }}. Saved assembly changes appear in every parent that uses it.</p>
 
     <div :inert="saving">
-      <SplitPanes left-label="product structure" right-label="selection details" storage-key="processPlan.splitSizes">
+      <SplitPanes
+        ref="panes"
+        left-label="product structure"
+        right-label="selection details"
+        storage-key="processPlan.splitSizes"
+      >
         <template #left>
           <PlanTree :plan="plan" :selected-id="selectedScopeId" @select="selectedScopeId = $event" />
         </template>
@@ -52,6 +57,15 @@
             <v-spacer />
             <v-btn size="small" variant="text" @click="overview = !overview">{{ overview ? 'Edit sequence' : 'Combined steps' }}</v-btn>
             <v-btn prepend-icon="mdi-folder-plus-outline" size="small" variant="text" @click="dialog = true">New subprocess</v-btn>
+
+            <v-btn
+              :aria-label="panes?.focused ? 'Show the side panels' : 'Hide the side panels'"
+              :icon="panes?.focused ? 'mdi-arrow-collapse-horizontal' : 'mdi-arrow-expand-horizontal'"
+              size="small"
+              :title="panes?.focused ? 'Show the product structure and the details again' : 'Hide the product structure and the details: the sequence gets the whole width'"
+              variant="text"
+              @click="panes?.focus(!panes.focused)"
+            />
           </div>
 
           <v-card-text>
@@ -133,6 +147,7 @@
   /** What draws the sequence, with PlanGraph's props and events (the BPMN notation's PlanBpmnGraph). */
   defineProps<{ graph?: Component }>()
 
+  const panes = useTemplateRef<InstanceType<typeof SplitPanes>>('panes')
   const dialog = ref(false)
   const subprocessName = ref('')
   const overview = ref(false)

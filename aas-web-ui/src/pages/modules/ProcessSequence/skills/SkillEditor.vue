@@ -132,8 +132,8 @@
         </p>
       </div>
 
-      <v-row v-else-if="owner" no-gutters>
-        <v-col cols="12" md="8">
+      <div v-else-if="owner" class="skill-panes">
+        <div class="skill-panes__main">
           <component
             :is="graph ?? SkillFlowGraph"
             v-model="nodes"
@@ -143,9 +143,28 @@
             @issues="drawing = $event"
             @select="selectedId = $event"
           />
-        </v-col>
+        </div>
 
-        <v-col class="border-s" cols="12" md="4">
+        <PaneTab
+          v-if="detailsHidden"
+          class="ma-2"
+          label="details"
+          side="right"
+          @open="setDetails(false)"
+        />
+
+        <div v-else class="skill-panes__side border-s">
+          <v-btn
+            aria-label="Hide the details"
+            class="skill-panes__hide"
+            density="comfortable"
+            icon="mdi-chevron-double-right"
+            size="small"
+            title="Hide the details: the flow gets the whole width"
+            variant="text"
+            @click="setDetails(true)"
+          />
+
           <SkillBlockInspector
             v-if="block && owner"
             :catalog="catalog"
@@ -185,8 +204,8 @@
 
             <p class="text-caption text-medium-emphasis">Select a step to say which skill of a component it runs and what it is handed.</p>
           </div>
-        </v-col>
-      </v-row>
+        </div>
+      </div>
     </v-card-text>
 
     <v-dialog v-model="naming" max-width="420">
@@ -217,6 +236,8 @@
   import type { ResourceSkill, SkillCommand } from './skillFlow'
   import type { Component } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
+  import PaneTab from '../components/PaneTab.vue'
+  import { useKeptFlag } from '../composables/useKeptFlag'
   import { flattenNodes } from '../utils/plan'
   import SkillBlockInspector from './SkillBlockInspector.vue'
   import { flowIssues, readFlow, readSkills, withFlow, withNewSkill, withParameter } from './skillFlow'
@@ -251,6 +272,8 @@
   const command = ref<SkillCommand>('Start')
   const nodes = ref<PlanNode[]>([])
   const selectedId = ref('')
+  /** The details column hidden to a tab along the right edge, kept per browser and alike in every editor on the page. */
+  const detailsHidden = useKeptFlag('skillEditor.detailsHidden')
   const naming = ref(false)
   const name = ref('')
   const busy = ref(false)
@@ -445,4 +468,50 @@
       busy.value = false
     }
   }
+
+  function setDetails (hide: boolean): void {
+    detailsHidden.value = hide
+  }
 </script>
+
+<style scoped>
+.skill-panes {
+  display: flex;
+  align-items: stretch;
+}
+
+.skill-panes__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.skill-panes__side {
+  position: relative;
+  flex: 0 0 33.333%;
+  min-width: 0;
+  padding-top: 36px;
+}
+
+/* At the top right, above what the column shows. */
+.skill-panes__hide {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  opacity: 0.6;
+}
+
+.skill-panes__hide:hover,
+.skill-panes__hide:focus-visible {
+  opacity: 1;
+}
+
+@media (max-width: 959px) {
+  .skill-panes {
+    flex-wrap: wrap;
+  }
+
+  .skill-panes__side {
+    flex-basis: 100%;
+  }
+}
+</style>
