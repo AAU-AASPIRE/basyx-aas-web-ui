@@ -117,5 +117,6 @@ describe('Match and plan', () => {
       source: { aasId: PRODUCT, submodelId: 's', path: [] }, semanticIds: [`${LAB}/FillVolume`] }]
     expect(requirementValues(need, recipe)).toEqual({ FillVolume: 3.5 })
     expect(plannedName('BottomUpFilling', 'Prefilled syringe 1 mL')).toBe('BottomUpFillingForPrefilledsyringe1mL')
+    expect(plannedName('BottomUpFilling', 'PrefilledSyringe1mLAAS')).toBe('BottomUpFillingForPrefilledSyringe1mL')
   })
 })

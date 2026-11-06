@@ -49,9 +49,9 @@ export type MatchPlanServices = {
 const local = (meaning: string): string => canonicalMeaning(meaning).replace(/\/+$/, '').split('/').at(-1) ?? meaning
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
-/** A name for a planned skill: what it is for, and for which product (an idShort). */
+/** A name for a planned skill: what it is for, and for which product (an idShort, without the AAS it ends in). */
 export function plannedName (capability: string, product: string): string {
-  const name = `${capability}For${product}`.replace(/\W/g, '')
+  const name = `${capability}For${product.replace(/AAS$/, '')}`.replace(/\W/g, '')
   return /^[A-Z]/i.test(name) ? name : `S${name}`
 }
 
