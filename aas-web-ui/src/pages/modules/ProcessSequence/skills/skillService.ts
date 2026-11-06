@@ -88,6 +88,34 @@ export async function planSkill (shell: string, request: PlanRequest, service = 
   return ask<Planned>(`/plan/${encodeURIComponent(shell)}`, request, 'plan the skill', service, fetcher)
 }
 
+/** A requirement as the planner and the checker take it: a capability class and the values it is asked with. */
+export type Requirement = { capability: string, values: Record<string, number> }
+
+/**
+ * Check the module's skills against a requirement (``capability`` with ``values``: the product's bounds
+ * and its container's geometry): each run in time, with what the capability keeps. Findings per skill.
+ */
+export async function checkAgainst (shell: string, requirement: Requirement, service = skillServiceUrl(), fetcher: typeof fetch = fetch): Promise<Checked> {
+  return ask<Checked>(`/check/${encodeURIComponent(shell)}`, requirement, 'check the skills against the requirement', service, fetcher)
+}
+
+/** A capability class of the lab's vocabulary: the classes it narrows, itself first, and the results it can give. */
+export type VocabularyClass = { name: string, label: string | null, process: boolean, lineage: string[], results: string[] }
+
+/** What the vocabulary says of a capability class (``name``: its local name, BottomUpFilling). */
+export async function vocabularyClass (name: string, service = skillServiceUrl(), fetcher: typeof fetch = fetch): Promise<VocabularyClass> {
+  let response: Response
+  try {
+    response = await fetcher(`${service}/vocabulary/${encodeURIComponent(name)}`)
+  } catch (error) {
+    throw new Error(`The skill service at ${service} was not reached (${error instanceof Error ? error.message : String(error)}).`, { cause: error })
+  }
+  if (!response.ok) {
+    throw new Error(`The vocabulary has no capability ${name}`)
+  }
+  return await response.json() as VocabularyClass
+}
+
 /** A product's process AAS on its line, written by the service, and whether the recipe fits the line. */
 export type ProcessWritten = { product: string, process: string, idShort: string, result: 'Fits' | 'DoesNotFit', findings: string[] }
 

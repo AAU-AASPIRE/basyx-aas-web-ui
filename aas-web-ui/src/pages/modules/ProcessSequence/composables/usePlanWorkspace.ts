@@ -1,8 +1,10 @@
-import type { PlanNode, PlanProcess, ProcessPlan } from '../types/plan'
+import type { PlanNode, PlanProcess, ProcessPlan, StepNode } from '../types/plan'
+import type { Outcome } from '../utils/matchAndPlan'
 import { v4 } from 'uuid'
 import { useAASStore } from '@/store/AASDataStore'
 import { useInfrastructureStore } from '@/store/InfrastructureStore'
-import { processLine, writeProcess } from '../skills/skillService'
+import { checkAgainst, deriveCapabilities, planSkill, processLine, vocabularyClass, writeProcess } from '../skills/skillService'
+import { matchAndPlan } from '../utils/matchAndPlan'
 import { canCall, flattenNodes, parsePlan } from '../utils/plan'
 import { createPlanHierarchy } from '../utils/planHierarchy'
 import { changeNodeType, unwrapConditional } from '../utils/planTransforms'
@@ -25,6 +27,8 @@ export function usePlanWorkspace () {
   const resources = ref<{ id: string, name: string }[]>([])
   const availableProcesses = ref<PlanProcess[]>([])
   const typeUndo = ref<{ before: ProcessPlan, after: string, scopeId: string, nodeId: string }>()
+  const matching = ref(false)
+  const matched = ref<Outcome[]>()
   let generation = 0
   let storageKey = ''
 
@@ -261,6 +265,31 @@ export function usePlanWorkspace () {
     }
   }
 
+  /**
+   * Match and plan: every step without a resource bound to the skill that matches its requirements,
+   * or to one planned where none does (utils/matchAndPlan). The plan changes in place; Save keeps it.
+   */
+  async function matchAll (): Promise<void> {
+    if (!plan.value || matching.value) {
+      return
+    }
+    matching.value = true
+    message.value = ''
+    const inherited = (node: StepNode) => node.process?.requiredCapabilities
+      ?? availableProcesses.value.find(item => JSON.stringify(item.source) === JSON.stringify(node.process?.source))?.requiredCapabilities ?? []
+    try {
+      matched.value = await matchAndPlan(plan.value, String(product.value?.idShort || 'Product'), resources.value, {
+        loadCapabilities: sources.loadCapabilities, loadSkills: sources.loadSkills,
+        vocabulary: name => vocabularyClass(name), check: (shell, requirement) => checkAgainst(shell, requirement),
+        plan: (shell, request) => planSkill(shell, request), derive: shell => deriveCapabilities(shell),
+      }, inherited)
+    } catch (error_) {
+      message.value = error_ instanceof Error ? error_.message : 'Match and plan did not finish.'
+    } finally {
+      matching.value = false
+    }
+  }
+
   function download (content?: string): void {
     if (!content && !plan.value) {
       return
@@ -277,5 +306,6 @@ export function usePlanWorkspace () {
     plan, product, scope, selectedScopeId, selectedNodeId, selectedNode, loading, saving,
     error, message, dirty, targets, availableProcesses, resources, breadcrumb, ownerName,
     initialize, reload, addSubprocess, save, download, changeType, undoTypeChange, canUndoType, removeCondition,
+    matching, matched, matchAll,
   }
 }

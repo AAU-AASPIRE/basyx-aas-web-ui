@@ -15,6 +15,15 @@
       <v-btn :disabled="saving" prepend-icon="mdi-refresh" size="small" @click="reload">Reload plans</v-btn>
 
       <v-btn
+        :disabled="saving || matching"
+        :loading="matching"
+        prepend-icon="mdi-auto-fix"
+        size="small"
+        title="Bind every step without a resource to the skill that matches its required capabilities; where none does, plan one on a module that can carry it out"
+        @click="runMatch"
+      >Match and plan</v-btn>
+
+      <v-btn
         :disabled="saving || drawing.length > 0"
         :loading="saving"
         prepend-icon="mdi-content-save-outline"
@@ -117,6 +126,8 @@
       </SplitPanes>
     </div>
 
+    <PlanMatchResults v-model="showMatched" :outcomes="matched ?? []" />
+
     <v-dialog v-model="dialog" max-width="480">
       <v-card title="Create subprocess">
         <v-card-text>
@@ -140,6 +151,7 @@
   import { usePlanWorkspace } from '../composables/usePlanWorkspace'
   import PlanGraph from './PlanGraph.vue'
   import PlanInspector from './PlanInspector.vue'
+  import PlanMatchResults from './PlanMatchResults.vue'
   import PlanOverview from './PlanOverview.vue'
   import PlanTree from './PlanTree.vue'
   import SplitPanes from './SplitPanes.vue'
@@ -157,7 +169,14 @@
     plan, product, scope, selectedScopeId, selectedNodeId, selectedNode, loading, saving,
     error, message, dirty, targets, availableProcesses, resources, breadcrumb, ownerName,
     reload, addSubprocess, save, download, changeType, undoTypeChange, canUndoType, removeCondition,
+    matching, matched, matchAll,
   } = usePlanWorkspace()
+  const showMatched = ref(false)
+
+  async function runMatch (): Promise<void> {
+    await matchAll()
+    showMatched.value = (matched.value?.length ?? 0) > 0
+  }
   watch([selectedScopeId, overview], () => {
     drawing.value = []
   })
