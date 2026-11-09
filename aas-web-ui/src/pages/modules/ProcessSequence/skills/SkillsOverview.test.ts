@@ -1,5 +1,6 @@
 import type { CapabilityDescription } from '../utils/capabilities'
 import type { AasElement } from '../utils/sequenceModel'
+import type * as SkillService from './skillService'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createVuetify } from 'vuetify'
@@ -16,7 +17,8 @@ const filling: CapabilityDescription = {
   name: 'Filling', aasId: module, role: 'Offered', availability: 'Now', semanticIds: [], hasConstraints: false,
   reference: { type: 'ModelReference', keys: [{ type: 'Submodel', value: `${module}/submodels/CapabilityDescription` }] },
   realizedBy: [{ type: 'ModelReference', keys: [{ type: 'Submodel', value: `${module}/submodels/Skills` }, { type: 'SubmodelElementCollection', value: 'Dispensing' }] }],
-  properties: [{ name: 'FillVolume', semanticId: '', unit: 'mL', dataType: 'xs:double', kind: 'range', value: '', min: '0.5', max: '10.0' }],
+  properties: [{ name: 'FillVolume', semanticId: '', unit: 'mL', dataType: 'xs:double', kind: 'range', value: '', min: '0.5', max: '10.0' },
+    { name: 'ContainerType', semanticId: '', unit: '', dataType: 'xs:string', kind: 'values', value: '', min: '', max: '', values: ['vial', 'syringe'] }],
 }
 const saved: string[] = []
 const pushed: unknown[] = []
@@ -43,9 +45,9 @@ vi.mock('./useSkillRepository', () => ({
     },
   }),
 }))
-vi.mock('./skillService', () => ({
+vi.mock('./skillService', async importOriginal => ({
+  ...await importOriginal<typeof SkillService>(),
   deriveCapabilities: async () => ({ shell: module, stored: '', capabilities: [] }),
-  derivedLines: () => [],
   setSkillServiceUrl: () => {},
   planSkill: async (shell: string, request: { capability: string, name?: string, write?: boolean }) => {
     planRequests.push(request)
@@ -56,9 +58,12 @@ vi.mock('./skillService', () => ({
       shell, capability: request.capability, name: request.write ? request.name : undefined,
       steps: [{ skill: 'MoveAxis', capability: 'Positioning', component: 'FillingLinearAxis', args: { Position: 40 } },
         { skill: 'Dispense', capability: 'Dosing', component: 'FillingPump', args: { Volume: 2, FlowRate: 1 } }],
+      // The service derives what the module offers once the skill is described.
+      ...(request.write ? { derived: { shell, stored: '', capabilities: [{ idShort: 'Filling_FillTwo', capability: 'Filling', skill: 'FillTwo', Availability: 'AfterReconfiguration' }] } } : {}),
     }
   },
   skillServiceUrl: () => 'http://localhost:8090',
+  vocabularyClass: async (name: string) => ({ name, label: name, process: true, lineage: [name], results: ['FillWeight'] }),
 }))
 
 beforeAll(() => {
@@ -85,7 +90,7 @@ describe('skills overview', () => {
     expect(found.composites.map(skill => skill.idShort)).toEqual(['Dispensing'])
     expect(dispensing!.runs).toEqual({ Start: ['NeedleDown', 'Dispense', 'Home', 'Weigh'], Stop: ['Home'] })
     expect(dispensing!.inputs.map(item => parameterLine(item))).toEqual(['Volume 0.5–10 mL (default 1.0)'])
-    expect(dispensing!.offers).toEqual([{ name: 'Filling', availability: 'Now', properties: ['FillVolume 0.5–10.0 mL'] }])
+    expect(dispensing!.offers).toEqual([{ name: 'Filling', availability: 'Now', properties: ['FillVolume 0.5–10.0 mL', 'ContainerType vial or syringe'] }])
     expect(dispensing!.deployment).toBe('Built')
     expect(found.components.map(component => [component.name, component.skills.map(skill => skill.idShort)])).toEqual([
       ['FillingLinearAxisAAS', ['Home', 'MoveAxis']], ['FillingPumpAAS', ['Dispense']], ['FillingScaleAAS', ['Tare', 'Weigh']]])
@@ -126,15 +131,19 @@ describe('skills overview', () => {
     await flushPromises()
     const state = wrapper.vm as any
     state.openPlanning()
+    await flushPromises()
     expect(state.capability).toBe('Filling')
-    // What the capability is given: its ranges.
+    // What the capability is given: its ranges, and one of the values a list of it takes; what it may report.
     expect(state.ranges.map((property: { name: string }) => property.name)).toEqual(['FillVolume'])
-    state.values = { FillVolume: '2' }
+    expect(state.choices.map((property: { name: string }) => property.name)).toEqual(['ContainerType'])
+    expect(state.resultNames).toEqual(['FillWeight'])
+    state.values = { FillVolume: '2', ContainerType: 'syringe' }
     state.results = ['FillWeight']
     state.plannedName = 'FillTwo'
 
+    // A number as a number, a container type as text.
     await state.plan(false)
-    expect(planRequests).toEqual([{ capability: 'Filling', values: { FillVolume: 2 }, results: ['FillWeight'], name: 'FillTwo', write: false }])
+    expect(planRequests).toEqual([{ capability: 'Filling', values: { FillVolume: 2, ContainerType: 'syringe' }, results: ['FillWeight'], name: 'FillTwo', write: false }])
     expect(state.planned.steps.map((step: never) => state.stepLine(step))).toEqual([
       'MoveAxis (FillingLinearAxis): Position = 40', 'Dispense (FillingPump): Volume = 2, FlowRate = 1'])
     expect(state.planning).toBe(true)
@@ -142,7 +151,7 @@ describe('skills overview', () => {
     await state.plan(true)
     await flushPromises()
     expect(state.planning).toBe(false)
-    expect(state.note).toBe('FillTwo is planned and described; modsync reconfigure builds it.')
+    expect(state.note).toBe('FillTwo is planned and described; modsync reconfigure builds it. The module offers: Filling_FillTwo (FillTwo), after a reconfiguration.')
     expect(pushed.at(-1)).toEqual({ query: { path: 'http://repo/submodels/abc/submodel-elements/FillTwo' } })
     wrapper.unmount()
   })

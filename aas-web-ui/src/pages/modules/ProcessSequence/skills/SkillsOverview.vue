@@ -207,14 +207,14 @@
           <v-select
             v-model="capability"
             density="compact"
-            :items="capabilityNames"
+            :items="capabilityItems"
             label="Capability"
           />
 
           <v-text-field
             v-for="property in ranges"
             :key="property.name"
-            v-model="values[property.name]"
+            v-model="values[valueKey(property)]"
             density="compact"
             :hint="`${property.min} to ${property.max}${property.unit ? ` ${property.unit}` : ''}`"
             :label="property.name"
@@ -222,12 +222,25 @@
             type="number"
           />
 
+          <v-select
+            v-for="property in choices"
+            :key="property.name"
+            v-model="values[valueKey(property)]"
+            class="mt-2"
+            clearable
+            density="compact"
+            hint="One of the values the module takes"
+            :items="property.values"
+            :label="property.name"
+            persistent-hint
+          />
+
           <v-combobox
             v-model="results"
             chips
             class="mt-2"
             density="compact"
-            hint="What the skill reports when it is done, e.g. FillWeight"
+            hint="What the skill reports when it is done (the results the vocabulary gives the capability, e.g. FillWeight)"
             :items="resultNames"
             label="Results"
             multiple
@@ -273,13 +286,15 @@
 
 <script setup lang="ts">
   import type { CapabilityDescription } from '../utils/capabilities'
+  import type { CapabilityProperty } from '../utils/capabilityMatching'
   import type { AasElement } from '../utils/sequenceModel'
   import type { SkillsOverview } from './skillOverview'
   import type { Planned, PlannedStep } from './skillService'
   import { useRoute, useRouter } from 'vue-router'
+  import { canonicalMeaning } from '../utils/parameterSemantics'
   import { skillPath, withNewSkill } from './skillFlow'
   import { overview, parameterLine, shellName } from './skillOverview'
-  import { deriveCapabilities, derivedLines, planSkill, setSkillServiceUrl, skillServiceUrl } from './skillService'
+  import { deriveCapabilities, derivedLines, derivedNote, planSkill, setSkillServiceUrl, skillServiceUrl, vocabularyClass } from './skillService'
   import { useSkillRepository } from './useSkillRepository'
 
   const props = defineProps<{ submodelId: string, aasId: string, path?: string }>()
@@ -301,18 +316,51 @@
   const capabilities = ref<CapabilityDescription[]>([])
   const planning = ref(false)
   const capability = ref('')
-  const values = ref<Record<string, string>>({})
+  const values = ref<Record<string, string | null>>({})
   const results = ref<string[]>([])
   const plannedName = ref('')
   const planned = ref<Planned | null>(null)
   const planFailure = ref('')
-  const capabilityNames = computed(() => [...new Set(capabilities.value.map(item => item.name))])
-  const chosen = computed(() => capabilities.value.find(item => item.name === capability.value))
-  /** The values the capability is given (its ranges), and what it may report (its other properties). */
+  /** The capability classes the module offers, each once, by the name the planner knows it by (BottomUpFilling). */
+  const capabilityItems = computed(() => {
+    const found = new Map<string, { title: string, value: string }>()
+    for (const item of capabilities.value) {
+      if (!found.has(classOf(item))) {
+        found.set(classOf(item), { title: item.name, value: classOf(item) })
+      }
+    }
+    return [...found.values()]
+  })
+  const chosen = computed(() => capabilities.value.find(item => classOf(item) === capability.value))
+  /** The values the capability is given: its ranges, and one of the values a list of it takes (the container type). */
   const ranges = computed(() => (chosen.value?.properties ?? []).filter(property => property.kind === 'range'))
-  const resultNames = computed(() => (chosen.value?.properties ?? []).filter(property => property.kind !== 'range').map(property => property.name))
+  const choices = computed(() => (chosen.value?.properties ?? []).filter(property => property.kind === 'values' && (property.values ?? []).length > 0))
+  /** What the skill may report: the results the vocabulary gives the capability (FillWeight). */
+  const resultNames = ref<string[]>([])
 
   watch(() => [props.submodelId, props.aasId], load, { immediate: true })
+  watch(capability, async name => {
+    resultNames.value = []
+    try {
+      resultNames.value = name ? (await vocabularyClass(name)).results : []
+    } catch {
+      // Without the service or the class, results are typed by hand.
+    }
+  })
+
+  /** What a meaning is called in the vocabulary (its local name). */
+  function local (meaning: string): string {
+    return canonicalMeaning(meaning).replace(/\/+$/, '').split('/').at(-1) ?? meaning
+  }
+
+  function classOf (item: CapabilityDescription): string {
+    return item.semanticIds[0] ? local(item.semanticIds[0]) : item.name
+  }
+
+  /** The planner takes a value by the local name of what it means, as Match and plan sends it. */
+  function valueKey (property: CapabilityProperty): string {
+    return property.semanticId ? local(property.semanticId) : property.name
+  }
 
   async function load (): Promise<void> {
     failure.value = ''
@@ -334,7 +382,7 @@
   }
 
   function openPlanning (): void {
-    capability.value = capability.value || capabilityNames.value[0] || ''
+    capability.value = capability.value || capabilityItems.value[0]?.value || ''
     planned.value = null
     planFailure.value = ''
     planning.value = true
@@ -351,9 +399,10 @@
     planFailure.value = ''
     planned.value = null
     try {
+      // A number as a number; other text (a container type) as text, which the planner ignores where it uses none.
       const given = Object.fromEntries(Object.entries(values.value)
-        .filter(([, text]) => String(text).trim() !== '')
-        .map(([key, text]) => [key, Number(text)]))
+        .filter(([, text]) => text !== null && String(text).trim() !== '')
+        .map(([key, text]) => [key, Number.isFinite(Number(String(text).trim())) ? Number(String(text).trim()) : String(text).trim()]))
       planned.value = await planSkill(props.aasId, {
         capability: capability.value, values: given, results: results.value, name: plannedName.value.trim() || undefined, write,
       })
@@ -361,7 +410,7 @@
         const made = planned.value.name
         planning.value = false
         await load()
-        note.value = `${made} is planned and described; modsync reconfigure builds it.`
+        note.value = `${made} is planned and described; modsync reconfigure builds it. ${derivedNote(planned.value)}`.trim()
         open(made)
       }
     } catch (error) {
