@@ -79,7 +79,8 @@ export function requirementValues (required: CapabilityDescription | undefined, 
   return values
 }
 
-function realizing (match: CapabilityMatch, skills: SkillDefinition[]): SkillDefinition | undefined {
+/** The one skill of a resource that realizes every capability it matches with (Match resources binds it too). */
+export function realizing (match: CapabilityMatch, skills: SkillDefinition[]): SkillDefinition | undefined {
   return skills.find(skill => skill.reference && match.capabilities.length > 0
     && match.capabilities.every(capability => capability.realizedBy.some(reference => referenceKey(reference) === referenceKey(skill.reference!))))
 }

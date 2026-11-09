@@ -2,7 +2,7 @@
   <InspectorSection
     collapsible
     color="success"
-    help="Matches capability meanings, values, ranges and units across all resources, and says which are offered only after a reconfiguration. Choose one station skill per step. Additional constraints require separate checks."
+    help="The skill service matches capability meanings, values, ranges and units across all resources, and says which are offered only after a reconfiguration. Choose one station skill per step. Additional constraints require separate checks."
     :initially-open="false"
     :summary="`${requirements.length} required`"
     title="Capabilities"
@@ -11,7 +11,7 @@
       <v-btn
         color="blue-darken-2"
         :disabled="loading || requirements.length === 0"
-        :loading="loading"
+        :loading="loading || matching"
         size="small"
         variant="flat"
         @click="showMatches = true"
@@ -51,7 +51,8 @@
     <PlanResourceMatches
       v-model="showMatches"
       :binding="binding"
-      :error="error"
+      :error="matchError || error"
+      :loading="matching"
       :matches="matches"
       :resources="resources"
       @assign="assign"
@@ -66,7 +67,8 @@
   import { useAASStore } from '@/store/AASDataStore'
   import { usePlanSources } from '../composables/usePlanSources'
   import { referenceKey } from '../utils/capabilities'
-  import { matchCapabilities } from '../utils/capabilityMatching'
+  import { matchResources } from '../utils/capabilityMatching'
+  import { realizing } from '../utils/matchAndPlan'
   import { assignSkill } from '../utils/skillAssignment'
   import InspectorSection from './InspectorSection.vue'
   import PlanResourceMatches from './PlanResourceMatches.vue'
@@ -80,9 +82,13 @@
   const error = ref('')
   const binding = ref(false)
   const showMatches = ref(false)
+  /** How the resources answer the step, as the skill service last said; why it did not, if it did not. */
+  const matches = ref<CapabilityMatch[]>([])
+  const matching = ref(false)
+  const matchError = ref('')
   let generation = 0
+  let asked = 0
   const requirements = computed(() => node.value.requiredCapabilities ?? props.inherited)
-  const matches = computed(() => matchCapabilities(requirements.value, catalog.value, node.value.process?.parameters))
   const owners = computed(() => [...new Set([String(aasStore.getSelectedAAS?.id ?? ''), node.value.process?.source.aasId ?? '', ...props.resources.map(resource => resource.id)])].filter(Boolean))
   const options = computed(() => {
     const selected = new Map(requirements.value.map(item => [referenceKey(item.reference), item]))
@@ -97,7 +103,38 @@
   watch(() => [node.value.id, node.value.process], () => {
     showMatches.value = false
   })
-  onBeforeUnmount(() => generation++)
+  // While the matches are shown they follow the step's requirements, its recipe and the resources.
+  watch([showMatches, requirements, () => node.value.process?.parameters, () => props.resources], ([open]) => {
+    if (open) {
+      void match()
+    }
+  }, { deep: true })
+  onBeforeUnmount(() => {
+    generation++
+    asked++
+  })
+
+  /** Ask the skill service how the resources answer the step; only the last question's answer is kept. */
+  async function match (): Promise<void> {
+    const ticket = ++asked
+    matching.value = true
+    matchError.value = ''
+    try {
+      const found = await matchResources(requirements.value, node.value.process?.parameters ?? [], props.resources.map(resource => resource.id))
+      if (ticket === asked) {
+        matches.value = found.matches
+      }
+    } catch (error_) {
+      if (ticket === asked) {
+        matches.value = []
+        matchError.value = `Matching needs the skill service. ${error_ instanceof Error ? error_.message : String(error_)}`
+      }
+    } finally {
+      if (ticket === asked) {
+        matching.value = false
+      }
+    }
+  }
 
   function resolved (requirement: CapabilityRequirement): boolean {
     return requirement.reference.type === 'ExternalReference'
@@ -112,7 +149,7 @@
     try {
       const skills = await loadSkills(match.aasId)
       if (node.value !== selectedNode || node.value.process !== selectedProcess) return
-      const skill = skills.find(skill => skill.reference && match.capabilities.every(capability => capability.realizedBy.some(reference => referenceKey(reference) === referenceKey(skill.reference!))))
+      const skill = realizing(match, skills)
       if (!skill) {
         error.value = 'No single skill is linked to all matching capabilities. Select and verify a skill explicitly.'
         return

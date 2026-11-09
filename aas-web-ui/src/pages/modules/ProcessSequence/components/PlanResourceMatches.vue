@@ -17,8 +17,9 @@
 
       <v-card-text>
         <p class="text-body-small mb-3">Choose one resource for this step. {{ suitable }} within declared limits{{ later ? `, ${later} of them after a reconfiguration` : '' }}.</p>
+        <v-progress-linear v-if="loading" class="mb-3" color="blue-darken-2" indeterminate />
         <v-alert v-if="error" class="mb-3" density="compact" type="warning">{{ error }}</v-alert>
-        <p v-if="visible.length === 0" class="text-body-small">No resources offer these capabilities.</p>
+        <p v-if="visible.length === 0 && !loading && !error" class="text-body-small">No resources offer these capabilities.</p>
 
         <v-card
           v-for="match in visible"
@@ -75,7 +76,7 @@
 <script setup lang="ts">
   import type { CapabilityMatch } from '../utils/capabilityMatching'
 
-  const props = defineProps<{ matches: CapabilityMatch[], resources: { id: string, name: string }[], binding: boolean, error: string }>()
+  const props = defineProps<{ matches: CapabilityMatch[], resources: { id: string, name: string }[], binding: boolean, error: string, loading?: boolean }>()
   const emit = defineEmits<{ assign: [match: CapabilityMatch] }>()
   const open = defineModel<boolean>({ required: true })
   const status = {
