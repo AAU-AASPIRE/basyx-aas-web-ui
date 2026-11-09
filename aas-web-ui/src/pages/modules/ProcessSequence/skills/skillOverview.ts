@@ -1,6 +1,7 @@
 import type { SkillParameter } from '../types'
 import type { PlanNode } from '../types/plan'
 import type { Availability, CapabilityDescription } from '../utils/capabilities'
+import type { CapabilityProperty } from '../utils/capabilityMatching'
 import type { AasElement } from '../utils/sequenceModel'
 import type { ResourceSkill, SkillCommand } from './skillFlow'
 import { readFlow, readSkills, ruleSetOf } from './skillFlow'
@@ -74,11 +75,19 @@ function stepSkills (submodel: AasElement, skill: ResourceSkill): string[] {
   })
 }
 
+/** A property's value, range or the values it takes, in words. */
+function shown (property: CapabilityProperty): string {
+  if (property.kind === 'range') {
+    return `${property.min}–${property.max}`
+  }
+  return property.kind === 'values' ? (property.values ?? []).join(' or ') : property.value
+}
+
 function offersOf (skill: ResourceSkill, capabilities: CapabilityDescription[]): Offer[] {
   return capabilities.filter(item => item.aasId === skill.aasId && item.realizedBy.some(reference => reference.keys.at(-1)?.value === skill.idShort))
     .map(item => ({
       name: item.name, availability: item.availability,
-      properties: item.properties.map(property => `${property.name} ${property.kind === 'range' ? `${property.min}–${property.max}` : property.value}${property.unit ? ` ${property.unit}` : ''}`),
+      properties: item.properties.map(property => `${property.name} ${shown(property)}${property.unit ? ` ${property.unit}` : ''}`),
     }))
 }
 

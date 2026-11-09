@@ -17,10 +17,12 @@ export type CapabilityProperty = {
   semanticId: string
   unit: string
   dataType: string
-  kind: 'value' | 'range'
+  /** A value, a range, or the values it takes (a list: the container types a station holds). */
+  kind: 'value' | 'range' | 'values'
   value: string
   min: string
   max: string
+  values?: string[]
 }
 /**
  * How one resource answers a step's requirements. ``availability``: whether every capability it
@@ -60,13 +62,27 @@ export async function matchResources (requirements: CapabilityRequirement[], par
   }, 'match the resources', service, fetcher)
 }
 
-/** What a capability container states of its properties, as the planner shows them (the skill service matches them). */
+/** An element's unit: its Unit qualifier, else its IEC 61360 data specification's (as the matcher reads it). */
+function unitOf (element: Record<string, any>): string {
+  return (element.qualifiers ?? []).find((qualifier: Record<string, any>) => qualifier.type === 'Unit')?.value
+    ?? (element.embeddedDataSpecifications ?? []).map((spec: Record<string, any>) => spec.dataSpecificationContent?.unit).find(Boolean) ?? ''
+}
+
+/**
+ * What a capability container states of its properties, as the planner shows them (the skill service
+ * matches them): the data element of each property container, a value, a range or a list.
+ */
 export function readCapabilityProperties (container: Record<string, any>): CapabilityProperty[] {
-  return childrenOf(container).filter(set => semanticId(set) === capabilitySemantic('PropertySet')).flatMap(set => childrenOf(set).filter(item => semanticId(item) === capabilitySemantic('PropertyContainer'))).flatMap(item => childrenOf(item).map(property => ({
-    name: property.displayName?.find((name: { language: string }) => name.language === 'en')?.text ?? item.displayName?.find((name: { language: string }) => name.language === 'en')?.text ?? item.idShort ?? property.idShort,
-    semanticId: canonicalMeaning(property.supplementalSemanticIds?.[0]?.keys?.[0]?.value ?? ''),
-    unit: property.embeddedDataSpecifications?.[0]?.dataSpecificationContent?.unit ?? '',
-    dataType: property.valueType ?? '', kind: property.modelType === 'Range' ? 'range' as const : 'value' as const,
-    value: String(property.value ?? ''), min: String(property.min ?? ''), max: String(property.max ?? ''),
-  })))
+  return childrenOf(container).filter(set => semanticId(set) === capabilitySemantic('PropertySet')).flatMap(set => childrenOf(set).filter(item => semanticId(item) === capabilitySemantic('PropertyContainer'))).flatMap(item => childrenOf(item)
+    .filter(property => ['Property', 'Range', 'SubmodelElementList'].includes(property.modelType))
+    .map(property => {
+      const kind = property.modelType === 'Range' ? 'range' as const : (property.modelType === 'SubmodelElementList' ? 'values' as const : 'value' as const)
+      return {
+        name: property.displayName?.find((name: { language: string }) => name.language === 'en')?.text ?? item.displayName?.find((name: { language: string }) => name.language === 'en')?.text ?? item.idShort ?? property.idShort,
+        semanticId: canonicalMeaning(property.supplementalSemanticIds?.[0]?.keys?.[0]?.value ?? ''),
+        unit: unitOf(property), dataType: String(property.valueType ?? property.valueTypeListElement ?? ''), kind,
+        value: kind === 'value' ? String(property.value ?? '') : '', min: String(property.min ?? ''), max: String(property.max ?? ''),
+        ...(kind === 'values' ? { values: childrenOf(property).map(entry => String(entry.value ?? '')) } : {}),
+      }
+    }))
 }
