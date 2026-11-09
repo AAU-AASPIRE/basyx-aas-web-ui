@@ -1,10 +1,7 @@
 import type { StepNode } from '../types/plan'
-import type { CapabilityDescription } from './capabilities'
 import { jsonization, verification } from '@aas-core-works/aas-core3.1-typescript'
 import { describe, expect, it } from 'vitest'
 import { ARSO_FIXTURE_BASE, buildArsoFixture } from '../fixtures/arsoResources'
-import { readCapabilities } from './capabilities'
-import { matchCapabilities } from './capabilityMatching'
 import { canonicalMeaning } from './parameterSemantics'
 import { newPlan, parsePlan } from './plan'
 import { readPlanProcesses } from './planSources'
@@ -16,7 +13,6 @@ import { addSkillResults, assignSkill, clearSkill, inputSource } from './skillAs
 const fixture = buildArsoFixture()
 const product = `${ARSO_FIXTURE_BASE}/Vial2mLAAS`
 const processes = fixture.submodels.flatMap(model => readPlanProcesses(model, product))
-const catalog: CapabilityDescription[] = fixture.shells.flatMap(shell => shell.submodels.flatMap((reference: any) => readCapabilities(fixture.submodels.find(model => model.id === reference.keys[0].value)!, shell.id)))
 const skills = fixture.submodels.flatMap(model => readSkillCatalog(model).skills)
 const dispensing = skills.find(skill => skill.idShort === 'Dispensing')!
 const inspection = skills.find(skill => skill.idShort === 'Inspection')!
@@ -49,30 +45,11 @@ describe('ARSO resources and effective recipes', () => {
     expect(inputSource(input, [{ ...volume, semanticIds: ['urn:unrelated'], name: 'Volume' }])).toBeUndefined()
   })
 
-  it('checks effective overrides, rejects incompatible associations and retains independent tolerances', () => {
-    const node = step()
-    const volume = node.process!.parameters.find(parameter => parameter.name === 'FillVolume')!
-    const check = (parameters = node.process!.parameters, capabilities = catalog) => matchCapabilities(node.process!.requiredCapabilities!, capabilities, parameters).find(match => match.aasId === node.resourceAasId)!
-    expect(check().status).toBe('match')
-    volume.value = '12'
-    expect(check()).toMatchObject({ status: 'mismatch', reasons: expect.arrayContaining([expect.stringContaining('FillVolume: required 12')]) })
-    volume.value = '2'
-    expect(check([...node.process!.parameters, { ...volume }]).status).toBe('unknown')
-    volume.unit = 'L'
-    expect(check().status).toBe('unknown')
-    volume.unit = 'mL'
-    const withTolerance = structuredClone(catalog)
-    const required = withTolerance.find(item => item.aasId === product && item.semanticIds.some(id => id.endsWith('/Filling')))!
-    required.properties.push({ name: 'Accuracy', semanticId: 'https://smartproductionlab.aau.dk/semantics/AbsoluteFillError', unit: 'mL', dataType: 'xs:double', kind: 'range', min: '0', max: '0.01', value: '' })
-    expect(check([...node.process!.parameters, { ...volume, name: 'Accuracy', value: '1', semanticIds: ['https://smartproductionlab.aau.dk/semantics/AbsoluteFillError'] }], withTolerance).status).toBe('mismatch')
-  })
-
-  it('recognizes only the known legacy demo vocabulary and preserves real format mismatches', () => {
+  // How a recipe's values and tolerances match a station's is the skill service's matcher's
+  // (modreg.match in iec61499-mgmt-py, tested there with these cases).
+  it('recognizes only the known legacy demo vocabulary', () => {
     expect(canonicalMeaning('https://smartproductionlab.aau.dk/demo/pharma/semantics/Filling')).toBe('https://smartproductionlab.aau.dk/semantics/Filling')
     expect(canonicalMeaning('https://other.example/semantics/Filling')).toBe('https://other.example/semantics/Filling')
-    const node = step()
-    node.process!.parameters.find(parameter => parameter.name === 'ContainerType')!.value = 'syringe'
-    expect(matchCapabilities(node.process!.requiredCapabilities!, catalog, node.process!.parameters).find(match => match.aasId === node.resourceAasId)!.status).toBe('mismatch')
   })
 
   it('saves input targets and output sources as AAS references and keeps stable decision identities', async () => {

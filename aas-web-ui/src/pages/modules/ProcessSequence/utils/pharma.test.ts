@@ -1,19 +1,14 @@
-import type { CapabilityDescription } from './capabilities'
 import { jsonization } from '@aas-core-works/aas-core3.1-typescript'
 import { describe, expect, it } from 'vitest'
 import { buildPharmaDemo, PHARMA_RECIPES } from '../demo/pharma'
 import { buildDemo } from '../demo/seed'
 import template from '../templates/ProductionSequence.json'
-import { readCapabilities } from './capabilities'
-import { matchCapabilities } from './capabilityMatching'
 import { flattenNodes, parsePlan } from './plan'
 import { readPlanProcesses } from './planSources'
 import { readSkillCatalog } from './readers'
 import { buildSequenceSubmodel, readSequenceSubmodel } from './sequenceModel'
 
 const demo = buildPharmaDemo(id => `${id}/sequence`)
-const catalog: CapabilityDescription[] = demo.shells.flatMap(shell => shell.submodels.flatMap((reference: { keys: { value: string }[] }) =>
-  readCapabilities(demo.submodels.find(model => model.id === reference.keys[0].value)!, shell.id)))
 
 describe('pharma recipes and structured sequence', () => {
   it('creates valid AAS shells and submodels with resolvable submodel references', () => {
@@ -63,47 +58,9 @@ describe('pharma recipes and structured sequence', () => {
           expect(step.resourceAasId).toBe('')
           continue
         }
-        const matches = matchCapabilities(step.requiredCapabilities!, catalog)
-        expect(matches.find(match => match.aasId === step.resourceAasId)?.status, step.id).toBe('match')
         const skillModel = demo.submodels.find(model => model.id === step.skillReference!.keys[0].value)!
         expect(readSkillCatalog(skillModel).byIdShort.has(step.skillId)).toBe(true)
       }
     }
-  })
-
-  it('rejects a volume outside station limits and does not guess unit conversions', () => {
-    const required = structuredClone(catalog.find(item => item.role === 'Required' && item.properties.some(property => property.name === 'FillVolume'))!)
-    const volume = required.properties.find(property => property.name === 'FillVolume')!
-    volume.value = '100'
-    const others = catalog.filter(item => item.role === 'Offered')
-    const requirements = [{ name: required.name, reference: required.reference }]
-    expect(matchCapabilities(requirements, [required, ...others]).every(match => match.status !== 'match')).toBe(true)
-    volume.value = '2'
-    volume.unit = 'L'
-    expect(matchCapabilities(requirements, [required, ...others]).find(match => match.aasId.endsWith('/filling-station'))?.status).toBe('unknown')
-  })
-
-  it('checks accuracy, inclusive boundaries, missing data and additional constraints', () => {
-    const required = structuredClone(catalog.find(item => item.role === 'Required' && item.properties.some(property => property.name === 'FillVolume'))!)
-    const offered = structuredClone(catalog.find(item => item.role === 'Offered' && item.properties.some(property => property.name === 'FillVolume') && item.properties.some(property => property.name === 'ContainerType' && property.value === 'vial'))!)
-    const requirements = [{ name: required.name, reference: required.reference }]
-    const match = () => matchCapabilities(requirements, [required, offered])[0].status
-    const volume = required.properties.find(property => property.name === 'FillVolume')!
-    const offeredVolume = offered.properties.find(property => property.name === 'FillVolume')!
-    for (const boundary of [offeredVolume.min, offeredVolume.max]) {
-      volume.value = boundary
-      expect(match()).toBe('match')
-    }
-    const error = offered.properties.find(property => property.name === 'AbsoluteFillError')!
-    error.value = '0.2'
-    expect(match()).toBe('mismatch')
-    error.value = '0.05'
-    offered.hasConstraints = true
-    expect(match()).toBe('unknown')
-    offered.hasConstraints = false
-    offeredVolume.max = ''
-    expect(match()).toBe('unknown')
-    offered.properties = offered.properties.filter(property => property.name !== 'FillVolume')
-    expect(match()).toBe('unknown')
   })
 })
