@@ -32,8 +32,11 @@ export function setSkillServiceUrl (url: string): void {
   }
 }
 
-/** A request to the skill service; what it did not do is raised with its reasons (``doing``: in words). */
-async function ask<T> (path: string, body: unknown, doing: string, service: string, fetcher: typeof fetch): Promise<T> {
+/**
+ * A request to the skill service; what it did not do is raised with its reasons (``doing``: in words),
+ * and a service that is not reached is said so, with how to start it.
+ */
+export async function ask<T> (path: string, body: unknown, doing: string, service: string, fetcher: typeof fetch): Promise<T> {
   let response: Response
   try {
     response = await fetcher(`${service}${path}`, body === undefined
@@ -76,20 +79,29 @@ export function findingLine (finding: Finding): string {
 
 /** A skill planned for a capability (modplan): its steps, and with ``write`` its name and where it was stored. */
 export type PlannedStep = { skill: string, capability: string, component: string, args: Record<string, unknown> }
-export type Planned = { shell: string, capability: string, steps: PlannedStep[], name?: string, stored?: string }
-export type PlanRequest = { capability: string, values: Record<string, number>, results?: string[], name?: string, write?: boolean }
+/** With ``write``, what the module offers once the skill is described (derived anew), or why that was not done. */
+export type Planned = {
+  shell: string
+  capability: string
+  steps: PlannedStep[]
+  name?: string
+  stored?: string
+  derived?: Derived | { error: string, reasons: string[] }
+}
+/** The values: numbers, or text (a container type); a number written as text is taken as a number. */
+export type PlanRequest = { capability: string, values: Record<string, number | string>, results?: string[], name?: string, write?: boolean }
 
 /**
  * Plan a module level skill that achieves ``capability`` with ``values`` (e.g. FillVolume) and
  * reports ``results``; with ``write`` it is described on the AAS server under ``name``, not built
- * (modsync reconfigure builds it).
+ * (modsync reconfigure builds it), and what the module offers is derived anew (``derived``).
  */
 export async function planSkill (shell: string, request: PlanRequest, service = skillServiceUrl(), fetcher: typeof fetch = fetch): Promise<Planned> {
   return ask<Planned>(`/plan/${encodeURIComponent(shell)}`, request, 'plan the skill', service, fetcher)
 }
 
 /** A requirement as the planner and the checker take it: a capability class and the values it is asked with. */
-export type Requirement = { capability: string, values: Record<string, number> }
+export type Requirement = { capability: string, values: Record<string, number | string> }
 
 /**
  * Check the module's skills against a requirement (``capability`` with ``values``: the product's bounds
