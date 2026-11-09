@@ -3,7 +3,8 @@ import type { Outcome } from '../utils/matchAndPlan'
 import { v4 } from 'uuid'
 import { useAASStore } from '@/store/AASDataStore'
 import { useInfrastructureStore } from '@/store/InfrastructureStore'
-import { checkAgainst, deriveCapabilities, planSkill, processLine, vocabularyClass, writeProcess } from '../skills/skillService'
+import { checkAgainst, planSkill, processLine, vocabularyClass, writeProcess } from '../skills/skillService'
+import { matchResources } from '../utils/capabilityMatching'
 import { matchAndPlan } from '../utils/matchAndPlan'
 import { canCall, flattenNodes, parsePlan } from '../utils/plan'
 import { createPlanHierarchy } from '../utils/planHierarchy'
@@ -279,9 +280,9 @@ export function usePlanWorkspace () {
       ?? availableProcesses.value.find(item => JSON.stringify(item.source) === JSON.stringify(node.process?.source))?.requiredCapabilities ?? []
     try {
       matched.value = await matchAndPlan(plan.value, String(product.value?.idShort || 'Product'), resources.value, {
-        loadCapabilities: sources.loadCapabilities, loadSkills: sources.loadSkills,
+        match: (requirements, parameters, ids) => matchResources(requirements, parameters, ids), loadSkills: sources.loadSkills,
         vocabulary: name => vocabularyClass(name), check: (shell, requirement) => checkAgainst(shell, requirement),
-        plan: (shell, request) => planSkill(shell, request), derive: shell => deriveCapabilities(shell),
+        plan: (shell, request) => planSkill(shell, request),
       }, inherited)
     } catch (error_) {
       message.value = error_ instanceof Error ? error_.message : 'Match and plan did not finish.'

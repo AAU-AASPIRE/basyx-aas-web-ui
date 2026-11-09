@@ -148,6 +148,17 @@ export function processLine (written: ProcessWritten): string {
     : `Its process AAS ${written.idShort} is written, but the recipe does not fit the line: ${written.findings.join('; ')}.`
 }
 
+/** What the module offers once a planned skill is described, in a sentence (empty if not asked). */
+export function derivedNote (planned: Planned): string {
+  const derived = planned.derived
+  if (!derived) {
+    return ''
+  }
+  return 'error' in derived
+    ? `What the module offers was not derived anew: ${[derived.error, ...derived.reasons].join('; ')}`
+    : `The module offers: ${derivedLines(derived).join('; ')}.`
+}
+
 /** One line per capability: what the module offers and through which skill, now or after a reconfiguration. */
 export function derivedLines (derived: Derived): string[] {
   return derived.capabilities.map(item => `${item.idShort} (${item.skill})${item.Availability === 'AfterReconfiguration' ? ', after a reconfiguration' : ''}`)
