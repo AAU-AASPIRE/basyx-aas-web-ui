@@ -259,10 +259,14 @@ xargs -0 -r sed -i -f "$PLACEHOLDER_WORK_DIR/replacements.sed" < "$PLACEHOLDER_W
 rm -rf "$PLACEHOLDER_WORK_DIR"
 trap - EXIT
 
+COORDINATES_PID=""
 BFF_PID=""
 NGINX_PID=""
 
 stop_processes() {
+    if [ -n "$COORDINATES_PID" ]; then
+        kill "$COORDINATES_PID" 2>/dev/null || true
+    fi
     if [ -n "$NGINX_PID" ]; then
         kill "$NGINX_PID" 2>/dev/null || true
     fi
@@ -279,11 +283,21 @@ if [ "$CX_EDC_BFF_ENABLED" = "true" ]; then
     BFF_PID="$!"
 fi
 
+# Coordinate history keeps database credentials server-side.
+node /usr/src/app/dist-bff/configurator/server.js &
+COORDINATES_PID="$!"
+
 # Start Nginx
 nginx -g 'daemon off;' &
 NGINX_PID="$!"
 
 while :; do
+    if ! kill -0 "$COORDINATES_PID" 2>/dev/null; then
+        wait "$COORDINATES_PID"
+        EXIT_CODE="$?"
+        stop_processes
+        break
+    fi
     if ! kill -0 "$NGINX_PID" 2>/dev/null; then
         wait "$NGINX_PID"
         EXIT_CODE="$?"
@@ -305,4 +319,6 @@ if [ -n "$BFF_PID" ]; then
     wait "$BFF_PID" 2>/dev/null || true
 fi
 
+kill "$COORDINATES_PID" 2>/dev/null || true
+wait "$COORDINATES_PID" 2>/dev/null || true
 exit "$EXIT_CODE"
