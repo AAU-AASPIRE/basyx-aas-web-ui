@@ -1,3 +1,10 @@
+<img src=".github/aaspire-icon.png" alt="" width="96" align="right">
+
+> **AASPIRE's fork** of Eclipse BaSyx's AAS Web UI, part of [AASPIRE](https://github.com/AAU-AASPIRE/aaspire).
+> Our work is on branches: `feat/process-sequence-pharma` (the Process Sequence plugin: the skill
+> editor, matching and planning by the skill service) and `feat/configurator` on top of it (products,
+> the line on the planar table, shuttle routing, orders). `main` follows upstream.
+
 # BaSyx AAS Web UI
 
 ![AAS Metamodel](https://img.shields.io/badge/AAS%20metamodel-v3.X-blue)
