@@ -139,6 +139,29 @@ export default defineConfig(({ mode }) => {
           target: process.env.CX_EDC_BFF_UPSTREAM_URL || 'http://localhost:3001',
           changeOrigin: true,
         },
+        // Mirrors the nginx location of the production image: the DMP status
+        // for the AIMC plugin, e.g. DMP_STATUS_URL=http://localhost:18085/management/status
+        ...(process.env.DMP_STATUS_URL
+          ? {
+              '/api/dmp/status': {
+                target: process.env.DMP_STATUS_URL,
+                changeOrigin: true,
+                ignorePath: true,
+              },
+            }
+          : {}),
+        // Mirrors the nginx InfluxDB query proxy, e.g. INFLUXDB_PROXY_ORIGIN=http://localhost:8086
+        // with INFLUXDB_PROXY_TOKEN; the frontend also needs VITE_INFLUXDB_PROXY_ORIGIN.
+        ...(process.env.INFLUXDB_PROXY_ORIGIN
+          ? {
+              '/api/influxdb/api/v2/query': {
+                target: process.env.INFLUXDB_PROXY_ORIGIN,
+                changeOrigin: true,
+                rewrite: (path: string) => path.replace(/^\/api\/influxdb/, ''),
+                headers: { Authorization: `Token ${process.env.INFLUXDB_PROXY_TOKEN ?? ''}` },
+              },
+            }
+          : {}),
       },
     },
   }
