@@ -1,9 +1,9 @@
-import type { PolicyVersion } from '@/pages/modules/ABAC/types/policy'
+import type { PolicyVersion } from '../../types/policy'
 import { useQuery } from '@tanstack/vue-query'
-import { useAbacContext } from '@/pages/modules/ABAC/api/useAbacContext'
+import { useAbacContext } from '../useAbacContext'
 
 export function useGetPolicies () {
-  const { client, keys, hasApiUrl } = useAbacContext(true)
+  const { client, keys, hasApiUrl } = useAbacContext()
 
   function group (policies: PolicyVersion[]): PolicyVersion[] {
     const active = policies.filter(({ status }) => status === 'active')

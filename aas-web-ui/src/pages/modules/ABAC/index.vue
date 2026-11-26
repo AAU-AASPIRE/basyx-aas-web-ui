@@ -3,12 +3,13 @@
 </template>
 
 <script setup lang="ts">
-  import { useAbacServiceDiscovery } from '@/pages/modules/ABAC/api/useAbacServiceDiscovery'
-  import AbacLayout from '@/pages/modules/ABAC/components/AbacLayout.vue'
-  import { ABAC_I18N_KEY } from '@/pages/modules/ABAC/constants/i18n'
-  import { useAbacNavigation } from '@/pages/modules/ABAC/hooks/useAbacNavigation'
-  import { i18nGlobal } from '@/pages/modules/ABAC/i18n/setup'
-  import { useAbacConfigStore } from '@/pages/modules/ABAC/stores/useAbacConfigStore'
+  import { useGetPolicies } from './api/policy/useGetPolicies'
+  import { useAbacServiceDiscovery } from './api/useAbacServiceDiscovery'
+  import AbacLayout from './components/AbacLayout.vue'
+  import { ABAC_I18N_KEY } from './constants/i18n'
+  import { useAbacNavigation } from './hooks/navigation/useAbacNavigation'
+  import { i18nGlobal } from './i18n/setup'
+  import { useAbacConfigStore } from './stores/useAbacConfigStore'
 
   defineOptions({
     moduleName: 'ABAC',
@@ -25,7 +26,7 @@
 
   // URL <-> store sync
   const { data: discoveredServices, isPending } = useAbacServiceDiscovery()
-  const { selectedService, onSelectService } = useAbacNavigation()
+  const { selectedService, onSelectService, selectedPolicyVersion, onSelectPolicy } = useAbacNavigation()
 
   watch(
     discoveredServices,
@@ -50,6 +51,14 @@
     if (match) configStore.setApiUrl(match.url)
   })
 
+  // Select active policy if no policy param is passed
+  const { data: policies } = useGetPolicies()
+  watch([policies, selectedService], ([list, service]) => {
+    if (selectedPolicyVersion.value || !service) return
+    const active = list?.find(policy => policy.status === 'active')
+    if (active) onSelectPolicy(active.version_id, { replace: true })
+  }, { immediate: true, flush: 'post' })
+
   watch(
     () => configStore.language,
     lang => {
@@ -61,3 +70,35 @@
   // Providers
   provide(ABAC_I18N_KEY, i18nGlobal)
 </script>
+
+<style scoped>
+  :global(.abac-field-warning .v-messages) {
+    color: rgb(var(--v-theme-warning));
+  }
+
+  /* Menu-opened dialogs can inherit a lower Vuetify stack level than the FAB.
+     Hide mobile navigation only while an ABAC modal is active, including its
+     teleported menu; visibility also removes those controls from keyboard focus. */
+  :global(body:has(.abac-dialog.v-overlay--active) .app-mobile-menu) {
+    visibility: hidden;
+  }
+
+  /* Dialog overlays are teleported outside AbacLayout's scoped descendants. */
+  :global(:is(.abac-scroll, .abac-dialog) ::-webkit-scrollbar) {
+    width: 4px;
+    height: 4px;
+  }
+
+  :global(:is(.abac-scroll, .abac-dialog) ::-webkit-scrollbar-track) {
+    background: transparent;
+  }
+
+  :global(:is(.abac-scroll, .abac-dialog) ::-webkit-scrollbar-thumb) {
+    background: rgba(var(--v-theme-on-surface), 0.2);
+    border-radius: 2px;
+  }
+
+  :global(:is(.abac-scroll, .abac-dialog) ::-webkit-scrollbar-thumb:hover) {
+    background: rgba(var(--v-theme-on-surface), 0.4);
+  }
+</style>

@@ -1,12 +1,11 @@
 <template>
-  <v-tooltip location="top" :open-delay="400">
-    <template #activator="{ props: tipProps }">
+  <v-tooltip location="top" open-delay="600">
+    <template #activator="{ props: tooltipProps }">
       <v-chip
-        v-bind="tipProps"
+        v-bind="tooltipProps"
         :color="badgeConfig.color"
         label
         size="x-small"
-        variant="flat"
       >
         <v-icon :icon="badgeConfig.icon" size="14" start />
         {{ badgeConfig.label }}
@@ -18,9 +17,9 @@
 </template>
 
 <script setup lang="ts">
-  import type { Rule } from '@/pages/modules/ABAC/types/rules'
-  import { useAbacI18n } from '@/pages/modules/ABAC/i18n/useAbacI18n'
-  import { classifyFormulaComplexity } from '@/pages/modules/ABAC/utils/formulaComplexity'
+  import type { Rule } from '../../types/rules'
+  import { useAbacI18n } from '../../i18n/useAbacI18n'
+  import { classifyFormulaComplexity } from '../../utils/formulaComplexity'
 
   const ICONS = {
     LOW: 'mdi-speedometer-slow',
@@ -35,7 +34,7 @@
   const complexity = computed(() => classifyFormulaComplexity(rule?.configured_rule_json?.FORMULA))
 
   const badgeConfig = computed(() => {
-    if (!complexity || complexity.value === 'N/A')
+    if (complexity.value === 'N/A')
       return {
         color: 'grey',
         icon: ICONS.N_A,

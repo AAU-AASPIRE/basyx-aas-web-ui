@@ -1,14 +1,32 @@
+import type { SnackbarType } from '@/types/Application'
+import type { BaSyxComponentKey } from '@/types/BaSyx'
 import type { InfrastructureConfig } from '@/types/Infrastructure'
 import { useAuth } from '@/composables/Auth/useAuth'
 import { useEnvStore } from '@/store/EnvironmentStore'
 import { useInfrastructureStore } from '@/store/InfrastructureStore'
 import { useNavigationStore } from '@/store/NavigationStore'
 import { isValidCustomHeader } from '@/utils/CustomHeaderUtils'
+import { getComponentLabel } from '@/utils/InfrastructureUtils'
 import { parseTrustedOrigin } from '@/utils/TrustedOriginUtils'
+
+class NetworkRequestError extends TypeError {}
+
+class RequestConfigurationError extends Error {
+  constructor (error: unknown) {
+    super(error instanceof Error ? error.message : String(error), { cause: error })
+    this.name = error instanceof Error ? error.name : 'Error'
+  }
+}
 
 class UntrustedEndpointError extends Error {
   constructor (message = 'Untrusted endpoint blocked. Add its origin to the selected infrastructure to allow requests.') {
     super(message)
+  }
+}
+
+class BlockedRedirectError extends UntrustedEndpointError {
+  constructor () {
+    super('Redirect blocked because its destination cannot be verified.')
   }
 }
 
@@ -21,7 +39,7 @@ function isInteractiveOAuth2WithoutToken (statusCode: number | undefined, infra:
 
 export interface RequestErrorHandlingOptions {
   /**
-   * Status codes which are an expected outcome for this specific request.
+   * Status codes which are an expected outcome for this request or handler instance.
    * Authentication and authorization failures are never suppressed.
    */
   suppressStatuses?: ReadonlyArray<number>
@@ -29,6 +47,13 @@ export interface RequestErrorHandlingOptions {
    * Cancels the request without showing an error message.
    */
   signal?: AbortSignal
+  /**
+   * Reports a redirect as `redirected: true` without an error message.
+   * Its target stays hidden and is never requested.
+   */
+  acceptRedirect?: boolean
+  /** Identifies a configured component probe independently of its display text. */
+  connectionCheck?: BaSyxComponentKey
 }
 
 export interface RequestResult<T = unknown> {
@@ -37,6 +62,18 @@ export interface RequestResult<T = unknown> {
   status?: number
   raw?: Response
   aborted?: true
+  /** Why a request failed: no response, invalid local request setup, an HTTP error status, or an unusable response body. */
+  failureKind?: 'network' | 'configuration' | 'http' | 'invalid-response'
+}
+
+function classifyRequestFailure (error: unknown, statusCode?: number): RequestResult['failureKind'] {
+  if (error instanceof NetworkRequestError) {
+    return 'network'
+  }
+  if (error instanceof RequestConfigurationError) {
+    return 'configuration'
+  }
+  return statusCode === undefined ? 'invalid-response' : 'http'
 }
 
 export interface RequestSecurityContext {
@@ -50,7 +87,12 @@ export interface RequestSecurityContext {
   isolateAuthenticationFailures?: boolean
 }
 
-export function useRequestHandling () {
+/**
+ * Sets default error handling options for requests made through this instance.
+ * Explicit per-request options replace these defaults; they are not merged.
+ * Other instances keep their own defaults.
+ */
+export function useRequestHandling (defaultErrorOptions: RequestErrorHandlingOptions = {}) {
   let lastRequestFailureStatus: number | undefined
   let lastRequestFailureDetails: string | undefined
 
@@ -78,32 +120,26 @@ export function useRequestHandling () {
     return ''
   }
 
-  function buildArrayErrorDetails (errorData: any[]): string {
-    if (errorData.length === 0) {
-      return ''
-    }
+  function buildArrayErrorDetails (errorData: unknown[]): string {
+    return errorData.map(entry => {
+      if (!entry || typeof entry !== 'object') {
+        return ''
+      }
+      const error = entry as Record<string, unknown>
+      const lines: string[] = []
 
-    const error = errorData[0] as {
-      code?: unknown
-      messageType?: unknown
-      correlationId?: unknown
-      timestamp?: unknown
-      text?: unknown
-    }
+      appendErrorLine(lines, 'Status', error.code)
+      appendErrorLine(lines, 'Message Type', error.messageType)
+      appendErrorLine(lines, 'Correlation ID', error.correlationId)
 
-    const lines: string[] = []
+      if (error.timestamp) {
+        appendErrorLine(lines, 'Timestamp', new Date(String(error.timestamp)).toLocaleString())
+      }
 
-    appendErrorLine(lines, 'Status', error.code)
-    appendErrorLine(lines, 'Message Type', error.messageType)
-    appendErrorLine(lines, 'Correlation ID', error.correlationId)
+      appendErrorLine(lines, 'Text', error.text)
 
-    if (error.timestamp) {
-      appendErrorLine(lines, 'Timestamp', new Date(String(error.timestamp)).toLocaleString())
-    }
-
-    appendErrorLine(lines, 'Text', error.text)
-
-    return lines.join('\n')
+      return lines.join('\n')
+    }).filter(Boolean).join('\n\n')
   }
 
   function buildObjectErrorDetails (errorData: Record<string, unknown>): string {
@@ -120,6 +156,12 @@ export function useRequestHandling () {
     appendErrorLine(lines, 'Route', route)
     appendErrorLine(lines, 'Correlation ID', errorData.correlationId)
     appendErrorLine(lines, 'Timestamp', errorData.timestamp)
+    if (Array.isArray(errorData.messages)) {
+      const messages = buildArrayErrorDetails(errorData.messages)
+      if (messages !== '') {
+        lines.push(messages)
+      }
+    }
 
     return lines.join('\n')
   }
@@ -164,6 +206,41 @@ export function useRequestHandling () {
     return requestOwnerId === getRequestOwnerId()
   }
 
+  function showRequestError (
+    error: unknown,
+    errorMessage: string,
+    statusCode?: number,
+    networkRequest?: SnackbarType['networkRequest'],
+  ): void {
+    const isNetworkError = error instanceof NetworkRequestError && statusCode === undefined
+    const networkContext = isNetworkError
+      ? { kind: 'network-error' as const, infrastructureId: getRequestOwnerId(), ...(networkRequest ? { networkRequest } : {}) }
+      : {}
+
+    if (isNetworkError && networkRequest?.operation === 'connection-check' && networkRequest.component) {
+      const componentLabel = `${getComponentLabel(networkRequest.component)} URL`
+      navigationStore.dispatchSnackbar({
+        status: true,
+        timeout: 60_000,
+        color: 'error',
+        btnColor: 'buttonText',
+        baseError: 'Unable to connect to the configured BaSyx environment.',
+        extendedError: `${componentLabel} could not be reached. Make sure the corresponding BaSyx component is running and verify its endpoint and CORS settings.\n\nTechnical details: ${errorMessage}`,
+        ...networkContext,
+      })
+      return
+    }
+
+    navigationStore.dispatchSnackbar({
+      status: true,
+      timeout: 60_000,
+      color: 'error',
+      btnColor: 'buttonText',
+      text: 'Error! Server responded with: ' + error,
+      ...networkContext,
+    })
+  }
+
   /**
    * Centralized error handler for catch blocks
    * Handles authentication errors and general errors
@@ -175,7 +252,14 @@ export function useRequestHandling () {
     requestOwnerId: string | undefined = getRequestOwnerId(),
     requestInfrastructure: InfrastructureConfig | null | undefined = infrastructureStore.getSelectedInfrastructure,
     isolateAuthenticationFailures = false,
-  ): { success: false, status?: number, aborted?: true, blocked?: true } {
+    networkRequest?: SnackbarType['networkRequest'],
+  ): { success: false, status?: number, aborted?: true, blocked?: true, redirected?: true, failureKind?: RequestResult['failureKind'] } {
+    if (error instanceof BlockedRedirectError && errorHandlingOptions.acceptRedirect) {
+      setLastRequestFailureStatus(undefined)
+      setLastRequestFailureDetails(undefined)
+      return { success: false, redirected: true }
+    }
+
     if (error instanceof UntrustedEndpointError) {
       setLastRequestFailureStatus(undefined)
       setLastRequestFailureDetails(error.message)
@@ -245,15 +329,9 @@ export function useRequestHandling () {
 
     // Handle other errors
     if (!disableMessage && !shouldSuppressStatus(statusCode, errorHandlingOptions)) {
-      navigationStore.dispatchSnackbar({
-        status: true,
-        timeout: 60_000,
-        color: 'error',
-        btnColor: 'buttonText',
-        text: 'Error! Server responded with: ' + error,
-      })
+      showRequestError(error, errorMessage, statusCode, networkRequest)
     }
-    return { success: false, status: statusCode }
+    return { success: false, status: statusCode, failureKind: classifyRequestFailure(error, statusCode) }
   }
 
   function shouldSuppressStatus (
@@ -374,7 +452,7 @@ export function useRequestHandling () {
     context: string,
     disableMessage: boolean,
     headers: Headers = new Headers(),
-    errorHandlingOptions: RequestErrorHandlingOptions = {},
+    errorHandlingOptions: RequestErrorHandlingOptions = defaultErrorOptions,
     responseType: 'auto' | 'blob' = 'auto',
     securityContext?: RequestSecurityContext,
   ): any {
@@ -472,6 +550,13 @@ export function useRequestHandling () {
         requestOwnerId,
         requestInfrastructure,
         securityContext?.isolateAuthenticationFailures,
+        securityContext?.isolateAuthenticationFailures
+          ? undefined
+          : {
+              url: path,
+              operation: errorHandlingOptions.connectionCheck ? 'connection-check' : 'read',
+              ...(errorHandlingOptions.connectionCheck ? { component: errorHandlingOptions.connectionCheck } : {}),
+            },
       ))
   }
 
@@ -482,7 +567,7 @@ export function useRequestHandling () {
     context: string,
     disableMessage: boolean,
     isTSRequest = false,
-    errorHandlingOptions: RequestErrorHandlingOptions = {},
+    errorHandlingOptions: RequestErrorHandlingOptions = defaultErrorOptions,
   ): any {
     const requestOwnerId = getRequestOwnerId()
     return fetchWithAuthentication(
@@ -565,7 +650,7 @@ export function useRequestHandling () {
     headers: Headers,
     context: string,
     disableMessage: boolean,
-    errorHandlingOptions: RequestErrorHandlingOptions = {},
+    errorHandlingOptions: RequestErrorHandlingOptions = defaultErrorOptions,
   ): any {
     const requestOwnerId = getRequestOwnerId()
     return fetchWithAuthentication(path, { method: 'PUT', body, headers, signal: errorHandlingOptions.signal })
@@ -620,7 +705,7 @@ export function useRequestHandling () {
     headers: Headers,
     context: string,
     disableMessage: boolean,
-    errorHandlingOptions: RequestErrorHandlingOptions = {},
+    errorHandlingOptions: RequestErrorHandlingOptions = defaultErrorOptions,
   ): any {
     const requestOwnerId = getRequestOwnerId()
     return fetchWithAuthentication(path, { method: 'PATCH', body, headers, signal: errorHandlingOptions.signal })
@@ -674,7 +759,7 @@ export function useRequestHandling () {
     headers: Headers,
     context: string,
     disableMessage: boolean,
-    errorHandlingOptions: RequestErrorHandlingOptions = {},
+    errorHandlingOptions: RequestErrorHandlingOptions = defaultErrorOptions,
   ): any {
     const requestOwnerId = getRequestOwnerId()
     return fetchWithAuthentication(path, { method: 'DELETE', headers, signal: errorHandlingOptions.signal })
@@ -731,6 +816,10 @@ export function useRequestHandling () {
       if (!isTrustedRequestTarget(path, requestInfrastructure)) {
         throw new UntrustedEndpointError()
       }
+      const target = new URL(path, window.location.origin)
+      if (target.username || target.password) {
+        throw new Error('Credentials in endpoint URLs are not supported. Use the infrastructure authentication settings.')
+      }
       const headers = includeAuth
         ? addAuthorizationHeader(options.headers, requestInfrastructure)
         : options.headers
@@ -738,12 +827,17 @@ export function useRequestHandling () {
       // a second request can carry infrastructure credentials to another origin.
       return fetch(path, { ...options, headers, redirect: 'manual' }).then(response => {
         if (response.type === 'opaqueredirect') {
-          throw new UntrustedEndpointError('Redirect blocked because its destination cannot be verified.')
+          throw new BlockedRedirectError()
         }
         return response
+      }, error => {
+        if (error instanceof TypeError) {
+          throw new NetworkRequestError(error.message, { cause: error })
+        }
+        throw error
       })
     } catch (error) {
-      return Promise.reject(error)
+      return Promise.reject(error instanceof UntrustedEndpointError ? error : new RequestConfigurationError(error))
     }
   }
 

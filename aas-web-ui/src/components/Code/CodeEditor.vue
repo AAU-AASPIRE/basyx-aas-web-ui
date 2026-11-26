@@ -4,10 +4,11 @@
       ref="container"
       class="code-editor rounded border"
       :class="{ 'code-editor--error': error }"
-      :style="{ height }"
     />
 
-    <v-progress-linear v-if="loading" :aria-label="`Loading ${accessibleLabel}`" indeterminate />
+    <slot v-if="loading" name="loading">
+      <v-progress-linear :aria-label="`Loading ${accessibleLabel}`" indeterminate />
+    </slot>
 
     <v-alert
       v-if="loadError"
@@ -47,7 +48,7 @@
   })
   const value = defineModel<string>({ required: true })
   const emit = defineEmits<{
-    'ready': [model: editor.ITextModel]
+    'ready': [model: editor.ITextModel, instance: editor.IStandaloneCodeEditor]
     'content-change': [value: string]
     'load-error': [error: unknown]
   }>()
@@ -82,6 +83,11 @@
     theme: theme.global.current.value.dark ? 'vs-dark' : 'vs',
   }))
 
+  // Leave native resize changes intact during content and diagnostic rerenders.
+  watch([container, () => props.height], ([element, height]) => {
+    if (element) element.style.height = height
+  }, { flush: 'post' })
+
   watch(value, text => {
     if (!model || text === model.getValue()) return
     applyingExternalValue = true
@@ -112,7 +118,7 @@
         emit('content-change', text)
         if (!applyingExternalValue) value.value = text
       })
-      emit('ready', model)
+      emit('ready', model, instance)
     } catch (error) {
       disposeEditor()
       if (unmounted) return

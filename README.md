@@ -1,3 +1,10 @@
+<img src=".github/aaspire-icon.png" alt="" width="96" align="right">
+
+> **AASPIRE's fork** of Eclipse BaSyx's AAS Web UI, part of [AASPIRE](https://github.com/AAU-AASPIRE/aaspire).
+> Our work is on branches: `feat/process-sequence-pharma` (the Process Sequence plugin: the skill
+> editor, matching and planning by the skill service) and `feat/configurator` on top of it (products,
+> the line on the planar table, shuttle routing, orders). `main` follows upstream.
+
 # BaSyx AAS Web UI
 
 ![AAS Metamodel](https://img.shields.io/badge/AAS%20metamodel-v3.X-blue)
@@ -30,6 +37,10 @@ Comprehensive documentation is available in the **[BaSyx Wiki](https://wiki.basy
 ## 🚀 Quick Start
 
 ### For End Users (Deployment)
+
+> **Backend services are required to browse and manage AAS data.** The Docker image below runs the Web UI only; it does not start an AAS repository or other backend services. Connect to an existing compatible AAS server or deploy one separately. BaSyx is one option; see the [minimal BaSyx Go example](https://github.com/eclipse-basyx/basyx-go-components/tree/main/examples/BaSyxMinimalExample) or [minimal BaSyx Java example](https://github.com/eclipse-basyx/basyx-java-server-sdk/tree/main/examples/BaSyxMinimal) for local setups. The services you need depend on your infrastructure template.
+>
+> After starting the UI, use **Settings → Infrastructures** to configure endpoints that your browser can reach. Allow the UI origin in the backend CORS configuration. See [Environment & Configuration](https://wiki.basyx.org/en/latest/content/user_documentation/basyx_components/web_ui/features/configuration.html) for administrator-managed deployments. Custom modules that do not access backend data can still run without these services.
 
 Pull and run the latest Docker image:
 

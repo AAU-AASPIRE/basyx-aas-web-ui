@@ -72,7 +72,7 @@
         </v-row>
         <!-- API Token -->
         <v-text-field
-          v-if="segmentType == 'LinkedSegment' && showTokenInput"
+          v-if="segmentType == 'LinkedSegment' && showTokenInput && !selectedSegmentProxied"
           v-model="apiToken"
           clearable
           density="compact"
@@ -229,6 +229,7 @@
     DEFAULT_AUTO_REFRESH,
     validateAutoRefreshSelection,
   } from '@/components/Plugins/Submodels/TimeSeries/autoRefresh'
+  import { findExternalSegmentData } from '@/components/Plugins/Submodels/TimeSeries/externalSegment'
   import {
     cloneTimeRangeSelection,
     DEFAULT_TIME_RANGE,
@@ -246,10 +247,13 @@
   import { useRequestHandling } from '@/composables/RequestHandling'
   import { useEnvStore } from '@/store/EnvironmentStore'
   import { useNavigationStore } from '@/store/NavigationStore'
+  import { base64Encode } from '@/utils/EncodeDecodeUtils'
 
   defineOptions({
     name: 'TimeSeriesData',
-    semanticId: 'https://admin-shell.io/idta/TimeSeries/1/1',
+    // The IDTA TimeSeries submodel, and a TimeSeries collection inside a submodel (aas-camel-dmp's profile:
+    // IDTA-shaped inside, its own semanticId outside).
+    semanticId: ['https://admin-shell.io/idta/TimeSeries/1/1', 'https://smartproductionlab.aau.dk/variables/TimeSeries/1/0'],
   })
 
   const props = withDefaults(
@@ -312,6 +316,10 @@
   let activeRequestId = 0
 
   // Computed properties
+  /** The selected LinkedSegment is queried through the Web UI's proxy, which needs no token here. */
+  const selectedSegmentProxied = computed(() => proxiedEndpoint(
+    selectedSegment.value?.value?.find((element: any) => checkIdShort(element, 'Endpoint'))?.value) !== null)
+
   const segmentType = computed(() => {
     if (!selectedSegment.value) {
       return null
@@ -428,33 +436,139 @@
 
     timeSeriesData.value = { ...props.submodelElementData } // create local copy of the TimeSeriesData
     // get the collection for segments
-    const segmentsSMC = timeSeriesData.value.submodelElements.find((smc: any) => checkIdShort(smc, 'Segments'))
+    const segmentsSMC = childrenOf(timeSeriesData.value).find((smc: any) => checkIdShort(smc, 'Segments'))
     // create an array of segments
     segments.value = segmentsSMC.value
     // console.log('Segments: ', segments.value);
     // get the collection for metadata
-    const metadataSMC = timeSeriesData.value.submodelElements.find((smc: any) => checkIdShort(smc, 'Metadata'))
+    const metadataSMC = childrenOf(timeSeriesData.value).find((smc: any) => checkIdShort(smc, 'Metadata'))
     // get the collection for records
     const recordsSMC = metadataSMC.value.find((smc: any) => checkIdShort(smc, 'Record'))
-    // create an array of records
-    const recordsArray = recordsSMC.value
-    // request the concept descriptions for the records (if they have semanticIds)
-    // Create a list of promises
-    const promises = recordsArray.map((record: any) => {
-      return fetchCds(record).then((response: any) => {
-        // add ConceptDescription to the record
-        if (response) {
-          record.conceptDescriptions = response
-        }
-        return record
+    // create an array of records: the members of groups, lists and referenced elements under their
+    // idShortPath (Position.x, Waypoints[0]), as the InfluxDB fields of a LinkedSegment are named
+    void recordFields(recordsSMC.value ?? []).then(recordsArray => {
+      // request the concept descriptions for the records (if they have semanticIds)
+      const promises = recordsArray.map((record: any) => {
+        return fetchCds(record).then((response: any) => {
+          // add ConceptDescription to the record
+          if (response) {
+            record.conceptDescriptions = response
+          }
+          return record
+        })
       })
-    })
-
-    // Wait for all promises to resolve and then update the reactive records
-    Promise.all(promises).then(updatedRecords => {
-      // console.log('Updated Records: ', updatedRecords);
+      // Wait for all promises to resolve and then update the reactive records
+      return Promise.all(promises)
+    }).then(updatedRecords => {
       records.value = updatedRecords
     })
+  }
+
+  /** The children of the TimeSeries: a submodel's submodelElements, or a collection's value. */
+  function childrenOf (element: any): any[] {
+    return element?.submodelElements ?? element?.value ?? []
+  }
+
+  /** The Record's fields under their idShortPath; a ReferenceElement counts as the element it references. */
+  async function recordFields (elements: any[]): Promise<any[]> {
+    const fields: any[] = []
+    for (const element of elements) {
+      fields.push(...await fieldsOf(element, element.idShort, true))
+    }
+    return fields
+  }
+
+  /**
+   * The fields of an element at path: a Range's min and max, a MultiLanguageProperty's languages, collection
+   * members by idShort, list members by index, an Operation's input, InOut and output variables by idShort; a File
+   * is one field. Inside a referenced element, references are not followed.
+   */
+  async function fieldsOf (element: any, path: string, resolveReferences: boolean): Promise<any[]> {
+    switch (element?.modelType) {
+      case 'ReferenceElement': {
+        const referenced = resolveReferences ? await fetchReferenced(element.value) : null
+        return referenced ? fieldsOf(referenced, path, false) : []
+      }
+      case 'SubmodelElementCollection': {
+        return (await Promise.all((element.value ?? []).map((member: any) =>
+          fieldsOf(member, `${path}.${member.idShort}`, resolveReferences)))).flat()
+      }
+      case 'SubmodelElementList': {
+        return (await Promise.all((element.value ?? []).map((member: any, index: number) =>
+          fieldsOf(member, `${path}[${index}]`, resolveReferences)))).flat()
+      }
+      case 'Range': {
+        return ['min', 'max'].map(bound => ({ ...element, modelType: 'Property', idShort: `${path}.${bound}` }))
+      }
+      case 'MultiLanguageProperty': {
+        return (element.value ?? []).map((entry: any) => ({ ...element, modelType: 'Property', valueType: 'xs:string',
+                                                            idShort: `${path}.${entry.language}` }))
+      }
+      case 'Operation': {
+        const variables = [...(element.inputVariables ?? []), ...(element.inoutputVariables ?? []),
+                           ...(element.outputVariables ?? [])].map((variable: any) => variable.value)
+        return (await Promise.all(variables.map((variable: any) =>
+          fieldsOf(variable, `${path}.${variable.idShort}`, resolveReferences)))).flat()
+      }
+      default: {
+        return [path === element?.idShort ? element : { ...element, idShort: path }]
+      }
+    }
+  }
+
+  /** The element a Record reference points at, read from the repository this TimeSeries comes from. */
+  async function fetchReferenced (reference: any): Promise<any | null> {
+    const keys = reference?.keys ?? []
+    const repository = String(props.submodelElementData?.path ?? '').split('/submodels/', 1)[0]
+    if (keys.length < 2 || keys[0]?.type !== 'Submodel' || repository === '') {
+      return null
+    }
+    let idShortPath = ''
+    for (let i = 1; i < keys.length; i++) {
+      idShortPath += i > 1 && keys[i - 1].type === 'SubmodelElementList' ? `[${keys[i].value}]` : `${i > 1 ? '.' : ''}${keys[i].value}`
+    }
+    const response = await getRequest(`${repository}/submodels/${base64Encode(keys[0].value)}/submodel-elements/${idShortPath}`,
+                                      'retrieving a referenced Record element', true)
+    if (!response?.success || !response.data) {
+      navigationStore.dispatchSnackbar({
+        status: true,
+        timeout: 6000,
+        color: 'warning',
+        btnColor: 'buttonText',
+        text: `Record reference to ${idShortPath} could not be resolved.`,
+      })
+      return null
+    }
+    return response.data
+  }
+
+  /**
+   * A LinkedSegment Endpoint on INFLUXDB_PROXY_ORIGIN, as the Web UI's nginx query proxy (which adds the
+   * token server-side); null for any other Endpoint, which is queried directly.
+   */
+  function proxiedEndpoint (endpoint: string | undefined): string | null {
+    const origin = String(envStore.getEnvInfluxdbProxyOrigin ?? '').trim()
+    if (!endpoint || origin === '' || origin.includes('PLACEHOLDER')) {
+      return null
+    }
+    try {
+      const url = new URL(endpoint)
+      if (url.origin !== new URL(origin).origin || url.pathname !== '/api/v2/query') {
+        return null
+      }
+      const basePath = String(envStore.getEnvBasePath ?? '').trim()
+      const prefix = basePath === '' || basePath.includes('PLACEHOLDER') ? '/' : basePath.replace(/\/?$/, '/')
+      return `${prefix}api/influxdb/api/v2/query${url.search}`
+    } catch {
+      return null
+    }
+  }
+
+  /** The repository path of a segment's element, for a TimeSeries submodel or collection. */
+  function segmentElementPath (segmentIdShort: string, element: string): string {
+    const inCollection = props.submodelElementData.modelType === 'SubmodelElementCollection'
+    return props.submodelElementData.path + (inCollection ? '.Segments.' : '/submodel-elements/Segments.')
+      + segmentIdShort + '.' + element
   }
 
   function fetchInternalData (): void {
@@ -536,9 +650,7 @@
     timeVariableId: string,
     selectedYVariables: any[],
   ): Promise<void> {
-    // console.log('Selected Segment: ', selectedSegment.value);
-    // get the Data File/Blob submodel element
-    const dataFile = selectedSegment.value.value.find((smc: any) => checkIdShort(smc, 'Data'))
+    const dataFile = findExternalSegmentData(selectedSegment.value)
     // determine the path to the file
     let path = ''
     if (dataFile?.modelType === 'File') {
@@ -548,11 +660,7 @@
     if (!path || path.trim() === '') {
       path = dataFile?.value || ''
       if (path.startsWith('/')) {
-        path
-          = props.submodelElementData.path
-            + '/submodel-elements/Segments.'
-            + selectedSegment.value.idShort
-            + '.Data/attachment'
+        path = segmentElementPath(selectedSegment.value.idShort, dataFile.idShort + '/attachment')
       }
     }
 
@@ -562,7 +670,7 @@
         timeout: 6000,
         color: 'warning',
         btnColor: 'buttonText',
-        text: 'No valid file path available for ExternalSegment Data.',
+        text: 'No File or Blob with a valid path available in the ExternalSegment.',
       })
       finishAsyncRequest(requestId)
       return
@@ -756,12 +864,13 @@
 
     // console.log('Endpoint: ', endpoint, ' Query: ', query);
     // construct the headers for the request
+    const proxied = proxiedEndpoint(endpoint)
     const requestHeaders = new Headers()
-    requestHeaders.append('Authorization', 'Token ' + apiToken.value)
+    if (!proxied) requestHeaders.append('Authorization', 'Token ' + apiToken.value)
     requestHeaders.append('Accept', 'application/csv')
     requestHeaders.append('Content-Type', 'application/vnd.flux')
     // construct the request
-    const path = endpoint
+    const path = proxied ?? endpoint
     const content = query
     const headers = requestHeaders
     const context = 'fetching data from Time Series Database'
@@ -829,7 +938,7 @@
     // Build the array of datasets in the order of selected yVariables
     const allKeys = Object.keys(datasets)
 
-    // Find missing y-vars by exact match
+    // Find missing y-vars by their InfluxDB field, the idShortPath
     const missingYVars = selectedYVariables
       .filter((yVar: any) => !allKeys.includes(yVar.idShort))
       .map((yVar: any) => yVar.idShort)

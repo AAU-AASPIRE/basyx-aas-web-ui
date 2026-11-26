@@ -5,21 +5,34 @@
 
   <v-container
     v-else
-    class="d-flex pa-0"
+    class="d-flex px-0 position-relative abac-scroll"
     fluid
     style="height: calc(100dvh - var(--v-layout-top, 64px) - var(--v-layout-bottom, 40px) - 2px)"
   >
-    <PoliciesList />
+    <template v-if="isMobile">
+      <v-navigation-drawer v-if="isListOpen" v-model="isListOpen" temporary width="320">
+        <PoliciesList @collapse="isListOpen = !isListOpen" />
+      </v-navigation-drawer>
 
-    <v-container class="pa-0 d-flex flex-column overflow-y-auto" style="max-width: 1440px; min-height: 0;">
-      <PolicyDetail />
-    </v-container>
+      <ListExpand v-else @expand="isListOpen = !isListOpen" />
+    </template>
+
+    <template v-else>
+      <PoliciesList v-if="isListOpen" class="my-2" @collapse="isListOpen = !isListOpen" />
+      <ListExpand v-else @expand="isListOpen = !isListOpen" />
+    </template>
+
+    <PolicyDetail />
   </v-container>
 </template>
 
 <script setup lang="ts">
-  import PolicyDetail from '@/pages/modules/ABAC/components/policy/detail/PolicyDetail.vue'
-  import PoliciesList from '@/pages/modules/ABAC/components/policy/list/PoliciesList.vue'
+  import { useAbacNavigation } from '../hooks/navigation/useAbacNavigation'
+  import PolicyDetail from './policy/detail/PolicyDetail.vue'
+  import PoliciesList from './policy/list/PoliciesList.vue'
+  import ListExpand from './shared/list/ListExpand.vue'
 
   defineProps<{ loading: boolean }>()
+
+  const { isListOpen, isMobile } = useAbacNavigation()
 </script>

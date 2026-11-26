@@ -10,9 +10,7 @@
  *
  */
 
-import type { FormulaExpression } from '@/pages/modules/ABAC/types/formula'
-
-export type Complexity = 'N/A' | 'LOW' | 'DATA_DRIVEN'
+import type { Complexity, FormulaExpression } from '../types/formula'
 
 /**
  * Deep-walk a FormulaExpression tree and return true if any node
@@ -42,7 +40,10 @@ export function hasFieldAccess (node: unknown): boolean {
   return false
 }
 
-export function classifyFormulaComplexity (formula?: FormulaExpression): Complexity {
+/**
+ * Classifies a formula expression, including not validated backend/editor input.
+ */
+export function classifyFormulaComplexity (formula?: unknown | FormulaExpression): Complexity {
   if (!formula) {
     return 'N/A'
   }

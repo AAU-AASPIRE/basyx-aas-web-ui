@@ -1,94 +1,79 @@
 <template>
-  <v-dialog v-model="isOpen" max-width="800" persistent scrollable>
-    <v-card>
-      <v-card-title class="pa-4 bg-cardHeader d-flex align-center">
-        <span class="text-h6" v-bind="i18nData('policies.import.title') ">{{ t('policies.import.title') }}</span>
-        <v-spacer />
+  <AbacDialog
+    v-model="isOpen"
+    :advisory="advisory"
+    :editor-mode="editorMode"
+    :error="jsonError"
+    :form-limitation="formLimitation"
+    :loading="isImportPending"
+    :messages="tm('policies.import.dialog')"
+    @submit="onSubmit"
+    @switch="switchEditorMode"
+  >
+    <!-- Source reference is optional audit metadata; keep this field for later.
+    <v-text-field
+      id="sourceRef"
+      v-model="sourceRef"
+      density="comfortable"
+      hide-details
+      v-bind="i18nData('policies.import.sourceRef')"
+      :label="t('policies.import.sourceRef')"
+      variant="outlined"
+    />
+    -->
 
-        <v-btn
-          density="comfortable"
-          :disabled="isImportPending"
-          :icon="ICONS.CLOSE"
-          size="small"
-          variant="text"
-          @click="close"
+    <v-switch
+      id="activateOnImport"
+      v-model="activateOnImport"
+      class="mx-2"
+      color="warning"
+      density="compact"
+      hide-details
+      v-bind="i18nData('policies.import.activateOnImport')"
+      :label="t('policies.import.activateOnImport')"
+    />
+
+    <template #form>
+      <div class="mt-4">
+        <PolicyForm
+          v-if="formDocument"
+          :doc="formDocument"
+          :error-paths="errorPaths"
+          :warning-paths="advisory?.paths"
+          @update:doc="updateFormDocument"
         />
-      </v-card-title>
+      </div>
+    </template>
 
-      <v-divider />
-
-      <v-card-text class="pa-4">
-        <v-form @submit.prevent="onSubmit">
-          <v-text-field
-            id="sourceRef"
-            v-model="sourceRef"
-            density="comfortable"
-            hide-details
-            v-bind="i18nData('policies.import.sourceRef')"
-            :label="t('policies.import.sourceRef')"
-            variant="outlined"
-          />
-
-          <v-switch
-            id="activateOnImport"
-            v-model="activateOnImport"
-            class="mx-2 my-4"
-            color="warning"
-            density="compact"
-            hide-details
-            v-bind="i18nData('policies.import.activateOnImport')"
-            :label="t('policies.import.activateOnImport')"
-          />
-
-          <JsonCodeEditor
-            v-model="policyJson"
-            :disabled="isImportPending"
-            :error-lines="errorLines"
-            :error-message="jsonError"
-            :label="t('policies.import.editor')"
-            :rows="16"
-          />
-        </v-form>
-      </v-card-text>
-
-      <v-divider />
-
-      <v-card-actions class="pa-4">
-        <v-btn
+    <template #json>
+      <div class="mt-4">
+        <AbacEditor
+          v-model="jsonText"
+          :active="editorMode === 'json'"
           :disabled="isImportPending"
-          variant="text"
-          v-bind="i18nData('policies.import.cancel')"
-          @click="close"
-        >
-          {{ t('policies.import.cancel') }}
-        </v-btn>
-
-        <v-btn
-          color="primary"
-          :loading="isImportPending"
-          variant="flat"
-          v-bind="i18nData('policies.import.import')"
-          @click="onSubmit"
-        >
-          {{ t('policies.import.import') }}
-        </v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+          :label="t('policies.import.editor')"
+          :rows="16"
+          :target="{ mode: 'create', viewer: 'policy', }"
+        />
+      </div>
+    </template>
+  </AbacDialog>
 </template>
 
 <script setup lang="ts">
-  import { useImportPolicy } from '@/pages/modules/ABAC/api/policy/useImportPolicy'
-  import JsonCodeEditor, { type JsonErrorMessage } from '@/pages/modules/ABAC/components/shared/JsonCodeEditor.vue'
-  import { EMPTY_POLICY } from '@/pages/modules/ABAC/constants/json'
-  import { useAbacNavigation } from '@/pages/modules/ABAC/hooks/useAbacNavigation'
-  import { usePolicyValidation } from '@/pages/modules/ABAC/hooks/usePolicyValidation'
-  import { useAbacI18n } from '@/pages/modules/ABAC/i18n/useAbacI18n'
   import { useNavigationStore } from '@/store/NavigationStore'
-
-  const ICONS = {
-    CLOSE: 'mdi-close',
-  } as const
+  import { useImportPolicy } from '../../api/policy/useImportPolicy'
+  import { EMPTY_POLICY } from '../../constants/json'
+  import { useDocumentEditor } from '../../hooks/forms/useDocumentEditor'
+  import { useAbacNavigation } from '../../hooks/navigation/useAbacNavigation'
+  import { useLiveValidation } from '../../hooks/validations/useLiveValidation'
+  import { usePolicyValidation } from '../../hooks/validations/usePolicyValidation'
+  import { useAbacI18n } from '../../i18n/useAbacI18n'
+  import { toSaveError } from '../../utils/api'
+  import { representPolicyDraft } from '../../utils/forms/policy'
+  import AbacEditor from '../shared/AbacEditor.vue'
+  import AbacDialog from '../shared/dialog/AbacDialog.vue'
+  import PolicyForm from './form/PolicyForm.vue'
 
   const { t, tm, i18nData } = useAbacI18n()
   const navigationStore = useNavigationStore()
@@ -99,36 +84,43 @@
   const isOpen = ref(false)
   const sourceRef = ref('')
   const activateOnImport = ref(false)
-  const policyJson = ref('')
-  const jsonError = ref<JsonErrorMessage | null>(null)
-  const errorLines = ref<number[]>([])
+
+  const {
+    formDocument,
+    jsonText,
+    editorMode,
+    formLimitation,
+    updateFormDocument,
+    initializeNewDocument,
+    switchEditorMode,
+  } = useDocumentEditor({
+    checkFormSupport: representPolicyDraft,
+  })
+
+  const { validateJson } = usePolicyValidation(tm('policies.import.errors'), tm('validation'), t('definitions.definitionDialog.errors.requiredName'))
+  const { error: jsonError, errorPaths, advisory, saveError, validateNow } = useLiveValidation({
+    enabled: () => isOpen.value,
+    input: () => ({
+      json: jsonText.value,
+    }),
+    validate: validateJson,
+  })
 
   function open (): void {
     isOpen.value = true
     sourceRef.value = ''
     activateOnImport.value = false
-    jsonError.value = null
-    errorLines.value = []
-    policyJson.value = JSON.stringify(EMPTY_POLICY, null, 2)
+    initializeNewDocument(EMPTY_POLICY)
   }
 
   function close (): void {
     isOpen.value = false
   }
-  const { validateJson } = usePolicyValidation(tm('validation'))
 
   async function onSubmit (): Promise<void> {
-    const { policy, error, errorLines: lines } = validateJson({
-      json: policyJson.value,
-      errorMessages: {
-        required: t('policies.import.required'),
-        invalidJson: t('policies.import.invalidJson'),
-        invalidPolicy: t('policies.import.invalidPolicy'),
-      },
-    })
+    const { payload: policy } = validateNow()
 
-    jsonError.value = error
-    errorLines.value = lines
+    saveError.value = null
 
     if (!policy) return
 
@@ -151,13 +143,13 @@
 
       close()
     } catch (error) {
-      const message = error instanceof Error ? error.message : t('policies.import.failed')
+      saveError.value = toSaveError(error, t('policies.import.failed'))
       navigationStore.dispatchSnackbar({
         status: true,
-        timeout: 4000,
+        timeout: 8000,
         color: 'error',
         btnColor: 'buttonText',
-        text: message,
+        text: t('policies.import.failed'),
       })
     }
   }
